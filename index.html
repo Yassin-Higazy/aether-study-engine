@@ -188,12 +188,16 @@ function save(){
 
 /* ---------------------------------- SHARED CLOUD SYNC (no login) ----------------------------------
    Everyone who opens this page's URL reads and writes the same single row in Supabase — that's the
-   "shared link, no account" model. Personal/local-only bits (AI key, which screen you're on) are
-   deliberately excluded so they never leave your own browser or get overwritten by another visitor. */
+   "shared link, no account" model. Pure UI/navigation state (which screen you're on) stays local.
+   The AI provider settings are a separate case: they sync too, but only through a PIN-only-readable
+   channel (workspace_secrets), never through the openly-readable shared_state row — so entering your
+   AI key once propagates to every device that has the PIN, without it ever sitting in public source
+   or being visible to someone who only has the link. */
 
 const SUPABASE_URL = 'https://fmqmxcziejsbutamwctt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ZEya936sCv4D_pVICmQ9Qg_cCdpoAcH';
 const SYNCED_KEYS = ['profile','courses','tasks','performanceLog','roadmaps','chat','constraints'];
+const PROTECTED_KEYS = ['apiProvider','apiKey','apiModel']; // synced only via the PIN-gated secrets RPCs
 
 let sb = null;
 let cloudStatus = 'connecting'; // 'connecting' | 'synced' | 'syncing' | 'offline' | 'error'
@@ -202,6 +206,29 @@ let cloudPushTimer = null;
 let lastPushedSignature = '';
 
 function pickSynced(s){ const o={}; SYNCED_KEYS.forEach(k=>{ o[k]=s[k]; }); return o; }
+
+async function loadSharedSecrets(){
+  if(!sb || !localPin) return;
+  try{
+    const { data, error } = await sb.rpc('get_shared_secrets', { pin: localPin });
+    if(error) throw error;
+    if(data && Object.keys(data).length){
+      isApplyingRemote = true;
+      PROTECTED_KEYS.forEach(k=>{ if(data[k]!==undefined && data[k]!=='') state[k]=data[k]; });
+      save();
+      isApplyingRemote = false;
+      render();
+    }
+  }catch(e){ console.error('Could not load shared AI settings', e); }
+}
+
+function pushSharedSecrets(){
+  if(!sb || !localPin) return;
+  const payload = {}; PROTECTED_KEYS.forEach(k=>{ payload[k]=state[k]; });
+  sb.rpc('set_shared_secrets', { pin: localPin, new_payload: payload }).then(({error})=>{
+    if(error) console.error('Could not share AI settings', error);
+  });
+}
 function applySynced(remote){ SYNCED_KEYS.forEach(k=>{ if(remote && remote[k]!==undefined) state[k]=remote[k]; }); }
 
 function setCloudStatus(next){ if(cloudStatus===next) return; cloudStatus=next; renderCloudBadgeInPlace(); }
@@ -210,6 +237,7 @@ function initCloud(){
   if(typeof supabase === 'undefined'){ console.error('Supabase client failed to load — falling back to local-only.'); setCloudStatus('error'); return; }
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   loadFromCloud();
+  if(localPin) loadSharedSecrets(); // already unlocked on this device — pull in the shared AI key
   sb.channel('shared_state_changes')
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'shared_state', filter:'id=eq.main' }, (payload)=>{
       const incoming = payload.new?.data;
@@ -1111,7 +1139,16 @@ function pinModalMarkup(){
     <div class="flex gap-2">
       <button data-action="savePin" class="flex-1 bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-bold py-2.5 rounded-xl transition">Save & Unlock</button>
       ${localPin?`<button data-action="clearPin" class="px-4 rounded-xl bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/15 text-sm font-semibold">Forget</button>`:''}
-    </div>`;
+    </div>
+    ${localPin ? `
+    <div class="mt-5 pt-4 border-t border-white/10">
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">Change the Shared PIN</label>
+      <p class="text-[11px] text-slate-500 mb-2 leading-relaxed">Sets a new PIN for the whole workspace — anyone still using the old one loses edit access until you tell them the new PIN.</p>
+      <div class="flex gap-2">
+        <input id="newPinInput" type="password" placeholder="New PIN" autocomplete="off" class="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 font-mono">
+        <button data-action="changePin" class="px-4 rounded-xl bg-white/10 hover:bg-white/15 text-sm font-semibold">Change</button>
+      </div>
+    </div>` : ''}`;
   return modalShell('pinModal','Unlock Shared Workspace','lock-keyhole', body);
 }
 
@@ -1373,10 +1410,11 @@ const actions = {
     state.apiKey = $('#apiKeyInput').value.trim();
     state.apiModel = $('#apiModelInput').value.trim() || state.apiModel;
     save();
-    toast(hasApiKey() ? 'AI engine connected.' : 'API key cleared.', hasApiKey()?'success':'info');
+    if(localPin){ pushSharedSecrets(); toast(hasApiKey() ? 'AI engine connected — synced to everyone with the PIN.' : 'API key cleared for everyone with the PIN.', hasApiKey()?'success':'info'); }
+    else toast(hasApiKey() ? 'AI engine connected (this device only — unlock the shared workspace to sync it).' : 'API key cleared.', hasApiKey()?'success':'info');
     closeModal('apiSetupModal'); render();
   },
-  clearApiKey(){ state.apiKey=''; save(); toast('API key removed.'); closeModal('apiSetupModal'); render(); },
+  clearApiKey(){ state.apiKey=''; save(); if(localPin) pushSharedSecrets(); toast('API key removed.'); closeModal('apiSetupModal'); render(); },
 
   savePin(){
     const v = $('#pinInput').value.trim();
@@ -1385,9 +1423,22 @@ const actions = {
     closeModal('pinModal');
     toast('PIN saved — retrying sync…', 'info');
     queueCloudPush(true);
+    loadSharedSecrets();
     render();
   },
   clearPin(){ saveLocalPin(''); setCloudStatus('locked'); closeModal('pinModal'); toast('PIN forgotten on this device — you can still view shared data, not edit it.'); render(); },
+  changePin(){
+    const newPin = $('#newPinInput').value.trim();
+    if(!newPin){ toast('Enter a new PIN first.', 'warn'); return; }
+    if(!sb || !localPin){ toast('Unlock with your current PIN first.', 'warn'); return; }
+    sb.rpc('change_shared_pin', { old_pin: localPin, new_pin: newPin }).then(({error})=>{
+      if(error){ toast('Could not change the PIN — your current PIN may be wrong, or sync is offline.', 'error'); return; }
+      saveLocalPin(newPin);
+      closeModal('pinModal');
+      toast('PIN changed. Share the new one with anyone who needs edit access — the old PIN no longer works.', 'success');
+      render();
+    });
+  },
 
   saveConstraints(){
     state.constraints.maxStudyHoursPerDay = Number($('#cMaxHours').value);

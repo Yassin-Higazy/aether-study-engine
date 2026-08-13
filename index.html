@@ -106,7 +106,7 @@ const toast = (msg, kind='info') => {
 /* ---------------------------------- CONSTANTS ---------------------------------- */
 const STORAGE_KEY = 'aether_study_engine_v1';
 const PIN_STORAGE_KEY = 'aether_workspace_pin_v1'; // stored separately — never part of synced app state
-const HOUR_PX = 48;
+const HOUR_PX = 64;
 const DAY_START_H = 6;
 const DAY_END_H = 24;
 
@@ -478,6 +478,19 @@ const TOOLS = {
     input_schema:{ type:'object', properties:{
       topic:{ type:'string' }, rating:{ type:'string', enum:['struggled','ok','aced'] }, note:{ type:'string' }
     }, required:['topic','rating'] }
+  },
+  manage_schedule: {
+    name:'manage_schedule',
+    description:'Modify the user\'s calendar. Use "add_task" to create one new task/event when the user asks you to schedule something. Use "delete_task" to remove one specific existing task the user names. Use "clear_all" only when the user unambiguously asks to delete, clear, or reset their ENTIRE schedule — never call it speculatively, as a test, or because a message merely mentions clearing something; the app will still make the user explicitly confirm before anything is actually deleted.',
+    input_schema:{ type:'object', properties:{
+      action:{ type:'string', enum:['add_task','delete_task','clear_all'] },
+      title:{ type:'string', description:'Task title. Required for add_task and delete_task.' },
+      type:{ type:'string', enum:['class','exam','meeting','review','gym','personal'], description:'Required for add_task.' },
+      date:{ type:'string', description:'YYYY-MM-DD. Required for add_task; optional filter for delete_task.' },
+      start:{ type:'string', description:'HH:MM in 24-hour time. Required for add_task.' },
+      end:{ type:'string', description:'HH:MM in 24-hour time. Required for add_task.' },
+      notes:{ type:'string' }
+    }, required:['action'] }
   }
 };
 
@@ -494,23 +507,23 @@ const PROVIDER_META = {
 function providerLabel(p=state.apiProvider){ return PROVIDER_META[p]?.label || p; }
 
 // Unified call: returns { text, toolCall: {name, input} | null }
-async function callAI({ system, messages, tool=null, forceTool=false, maxTokens=1400 }){
+async function callAI({ system, messages, tools=null, forceTool=false, maxTokens=1400 }){
   if(!hasApiKey()) throw new Error('NO_KEY');
-  if(state.apiProvider === 'anthropic') return callAnthropic({ system, messages, tool, forceTool, maxTokens });
+  if(state.apiProvider === 'anthropic') return callAnthropic({ system, messages, tools, forceTool, maxTokens });
   const meta = PROVIDER_META[state.apiProvider] || PROVIDER_META.openai;
-  return callOpenAICompatible(meta.endpoint, meta.label, { system, messages, tool, forceTool, maxTokens });
+  return callOpenAICompatible(meta.endpoint, meta.label, { system, messages, tools, forceTool, maxTokens });
 }
 
-async function callAnthropic({ system, messages, tool, forceTool, maxTokens }){
+async function callAnthropic({ system, messages, tools, forceTool, maxTokens }){
   const body = {
     model: state.apiModel || 'claude-opus-5',
     max_tokens: maxTokens,
     system,
     messages,
   };
-  if(tool){
-    body.tools = [TOOLS[tool]];
-    body.tool_choice = forceTool ? { type:'tool', name: tool } : { type:'auto' };
+  if(tools && tools.length){
+    body.tools = tools.map(t=>TOOLS[t]);
+    body.tool_choice = forceTool ? { type:'tool', name: tools[0] } : { type:'auto' };
   }
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
@@ -527,22 +540,21 @@ async function callAnthropic({ system, messages, tool, forceTool, maxTokens }){
     throw new Error(errBody?.error?.message || `Anthropic API error (${res.status})`);
   }
   const data = await res.json();
-  let text = '', toolCall = null;
+  let text = '', toolCalls = [];
   for(const block of (data.content||[])){
     if(block.type==='text') text += block.text;
-    if(block.type==='tool_use') toolCall = { name: block.name, input: block.input };
+    if(block.type==='tool_use') toolCalls.push({ name: block.name, input: block.input });
   }
-  return { text, toolCall, raw:data };
+  return { text, toolCalls, raw:data };
 }
 
 // Shared by OpenAI and DeepSeek — both implement the OpenAI chat-completions + tool-calling shape.
-async function callOpenAICompatible(endpoint, providerLabelStr, { system, messages, tool, forceTool, maxTokens }){
+async function callOpenAICompatible(endpoint, providerLabelStr, { system, messages, tools, forceTool, maxTokens }){
   const oaMessages = [ { role:'system', content: system }, ...messages.map(m=>({ role: m.role==='assistant'?'assistant':'user', content: m.content })) ];
   const body = { model: state.apiModel || 'gpt-4o', max_tokens: maxTokens, messages: oaMessages };
-  if(tool){
-    const t = TOOLS[tool];
-    body.tools = [{ type:'function', function:{ name:t.name, description:t.description, parameters:t.input_schema } }];
-    body.tool_choice = forceTool ? { type:'function', function:{ name: tool } } : 'auto';
+  if(tools && tools.length){
+    body.tools = tools.map(name=>{ const t=TOOLS[name]; return { type:'function', function:{ name:t.name, description:t.description, parameters:t.input_schema } }; });
+    body.tool_choice = forceTool ? { type:'function', function:{ name: tools[0] } } : 'auto';
   }
   const res = await fetch(endpoint, {
     method:'POST',
@@ -555,12 +567,11 @@ async function callOpenAICompatible(endpoint, providerLabelStr, { system, messag
   }
   const data = await res.json();
   const choice = data.choices?.[0]?.message;
-  let toolCall = null;
-  if(choice?.tool_calls?.length){
-    const tc = choice.tool_calls[0];
-    try{ toolCall = { name: tc.function.name, input: JSON.parse(tc.function.arguments) }; }catch(e){ toolCall = null; }
+  const toolCalls = [];
+  for(const tc of (choice?.tool_calls || [])){
+    try{ toolCalls.push({ name: tc.function.name, input: JSON.parse(tc.function.arguments) }); }catch(e){ /* skip malformed call */ }
   }
-  return { text: choice?.content || '', toolCall, raw:data };
+  return { text: choice?.content || '', toolCalls, raw:data };
 }
 
 function apiErrorMessage(e){
@@ -575,30 +586,35 @@ function apiErrorMessage(e){
 async function aiGenerateRoadmap({ goal, examDate, institution, courseNotes }){
   const sys = `You are Aether, an autonomous AI study planning engine embedded in a student productivity app. Produce highly accurate, tailored study roadmaps. Be concrete and use realistic hour estimates. Always call the generate_roadmap tool with your result — do not respond in plain text.`;
   const userMsg = `Goal / target exam: ${goal}\nTarget date: ${examDate}\nTarget institution / context: ${institution || 'n/a'}\nCourse requirements / notes: ${courseNotes || 'n/a'}\n\nBreak this into a realistic, comprehensive syllabus of topics with estimated study hours (be granular — 8 to 20 topics) and a priority for each, ordered logically for study sequencing.`;
-  const { toolCall } = await callAI({ system:sys, messages:[{role:'user',content:userMsg}], tool:'generate_roadmap', forceTool:true, maxTokens:2000 });
-  if(!toolCall) throw new Error('Model did not return structured roadmap data.');
-  return toolCall.input;
+  const { toolCalls } = await callAI({ system:sys, messages:[{role:'user',content:userMsg}], tools:['generate_roadmap'], forceTool:true, maxTokens:2000 });
+  if(!toolCalls?.length) throw new Error('Model did not return structured roadmap data.');
+  return toolCalls[0].input;
 }
 
 async function aiExtractTopics({ courseName, coverageText }){
   const sys = `You are Aether, an AI study engine. Extract clean, concise, deduplicated topic names from what a student says they covered in class. Always call the extract_topics tool.`;
   const userMsg = `Course: ${courseName || 'unspecified'}\nWhat was covered today:\n"""\n${coverageText}\n"""`;
-  const { toolCall } = await callAI({ system:sys, messages:[{role:'user',content:userMsg}], tool:'extract_topics', forceTool:true, maxTokens:800 });
-  if(!toolCall) throw new Error('Model did not return structured topic data.');
-  return toolCall.input;
+  const { toolCalls } = await callAI({ system:sys, messages:[{role:'user',content:userMsg}], tools:['extract_topics'], forceTool:true, maxTokens:800 });
+  if(!toolCalls?.length) throw new Error('Model did not return structured topic data.');
+  return toolCalls[0].input;
 }
 
 async function aiChat(userText){
-  const sys = `You are Aether, a warm, sharp, no-nonsense AI study coach embedded in the user's scheduling app. You can see the user's rough context below. When the user reports how a study session, topic, or practice test went, call the log_performance tool (in addition to a short reply) so the app can adaptively reschedule review sessions. Keep replies concise (2-4 sentences), encouraging, and specific. Priority order the app enforces: Fixed Uni Classes > Major Exams > Fixed Meetings > Self-Paced AI Review > Gym/Personal.
+  const sys = `You are Aether, a warm, sharp, no-nonsense AI study coach embedded in the user's scheduling app. You can see the user's rough context below.
+
+You have two tools:
+- log_performance: call this whenever the user reports how a study session, topic, or practice test went (in addition to giving a short reply), so the app can adaptively reschedule review sessions.
+- manage_schedule: call this when the user explicitly asks you to add something to their calendar, remove one named task, or clear/reset their entire schedule. Only use action "clear_all" when the request to wipe everything is clear and unambiguous — never call it speculatively, as a test, or because a message merely mentions the word "clear". The app will still make the user explicitly confirm in the UI before anything is actually deleted, so don't ask a clarifying question first if the request was already clear — just call the tool.
+
+Keep replies concise (2-4 sentences), encouraging, and specific. Priority order the app enforces: Fixed Uni Classes > Major Exams > Fixed Meetings > Self-Paced AI Review > Gym/Personal. Today is ${todayISO()}, so resolve relative dates ("tomorrow", "Friday") against it before calling manage_schedule.
 
 Context:
 - Courses: ${state.courses.map(c=>c.name).join(', ') || 'none yet'}
 - Upcoming roadmaps: ${state.roadmaps.map(r=>`${r.examName} (${r.examDate})`).join('; ') || 'none'}
-- Recent performance: ${state.performanceLog.slice(-5).map(p=>`${p.topic}: ${p.rating}`).join('; ') || 'none logged yet'}
-- Today: ${todayISO()}`;
+- Recent performance: ${state.performanceLog.slice(-5).map(p=>`${p.topic}: ${p.rating}`).join('; ') || 'none logged yet'}`;
   const history = state.chat.slice(-10).map(m=>({ role: m.role==='assistant'?'assistant':'user', content: m.content }));
-  const { text, toolCall } = await callAI({ system:sys, messages:[...history, {role:'user', content:userText}], tool:'log_performance', forceTool:false, maxTokens:700 });
-  return { text, toolCall };
+  const { text, toolCalls } = await callAI({ system:sys, messages:[...history, {role:'user', content:userText}], tools:['log_performance','manage_schedule'], forceTool:false, maxTokens:700 });
+  return { text, toolCalls };
 }
 
 /* ---------------------------------- ADAPTIVE SPACED REPETITION ---------------------------------- */
@@ -631,6 +647,57 @@ function logPerformance({ topic, rating, note, courseId=null }){
   const placed = reEnqueueTopicForReview(topic, courseId, rating);
   save();
   return placed;
+}
+
+/* ---------------------------------- AI SCHEDULE MANAGEMENT (chat-triggered) ----------------------------------
+   Adds/removes are applied directly — they're small, easily reversible actions consistent with what the
+   roadmap/lecture flows already do without a confirmation dialog. clear_all is different: total blast
+   radius, shared with everyone on this workspace, and this exact chat interface has already been hit once
+   by something sending "clear everything" with no real intent behind it. So the tool never deletes anything
+   itself — it only opens a confirmation modal a human has to explicitly click through. */
+function handleManageScheduleToolCall(input){
+  const action = input?.action;
+
+  if(action === 'clear_all'){
+    closeAllModals();
+    const root = $('#clearConfirmModal');
+    if(root){ root.outerHTML = clearConfirmModalMarkup(); openModal('clearConfirmModal'); lucide.createIcons(); bindGlobalOnce(true); }
+    return '⚠️ I need you to confirm clearing your entire schedule in the popup before I touch anything.';
+  }
+
+  if(action === 'add_task'){
+    if(!input.title || !input.date || !input.start || !input.end){
+      return `⚠️ Couldn't add "${input.title || 'that task'}" — missing a date, start, or end time.`;
+    }
+    if(!/^\d{2}:\d{2}$/.test(input.start) || !/^\d{2}:\d{2}$/.test(input.end) || toMin(input.end) <= toMin(input.start)){
+      return `⚠️ Couldn't add "${input.title}" — the times didn't make sense (${input.start}–${input.end}).`;
+    }
+    const type = TYPE_META[input.type] ? input.type : 'personal';
+    const candidate = { id: uid('task'), title: input.title, type, courseId: null, date: input.date, start: input.start, end: input.end, status:'pending', notes: input.notes || 'Added via AI Coach.', topic:'', roadmapId:null, createdAt:Date.now(), completedAt:null };
+    const conflicts = findConflicts(candidate).filter(c => typeWeight(c) >= typeWeight(candidate));
+    if(conflicts.length){
+      const options = generateConflictOptions(candidate);
+      pendingConflict = { candidate, options, blockers: conflicts, isNew:true };
+      closeAllModals();
+      const root = $('#conflictModal'); if(root){ root.outerHTML = conflictModalMarkup(); openModal('conflictModal'); lucide.createIcons(); bindGlobalOnce(true); }
+      return `⚠️ "${input.title}" clashes with your schedule — pick a resolution in the popup that just opened.`;
+    }
+    state.tasks.push(candidate);
+    save(); render();
+    return `✅ Added **${input.title}** — ${fmtDateShort(input.date)}, ${fmtTime12(input.start)}–${fmtTime12(input.end)}.`;
+  }
+
+  if(action === 'delete_task'){
+    if(!input.title) return `⚠️ Which task did you want removed? I need a title.`;
+    const matches = state.tasks.filter(t => t.title.toLowerCase() === input.title.toLowerCase() && (!input.date || t.date === input.date));
+    if(!matches.length) return `⚠️ Couldn't find a task titled "${input.title}"${input.date ? ` on ${fmtDateShort(input.date)}` : ''}.`;
+    const target = matches[0];
+    state.tasks = state.tasks.filter(t => t.id !== target.id);
+    save(); render();
+    return `🗑️ Removed **${target.title}** (${fmtDateShort(target.date)}).`;
+  }
+
+  return null;
 }
 
 /* ---------------------------------- EXPORT / IMPORT ---------------------------------- */
@@ -982,12 +1049,12 @@ function weekBlockMarkup(t, hourStart, rowH, compact){
   const height = Math.max(compact?14:18, (durMin/60)*rowH - 2);
   const done = t.status==='completed';
   return `
-  <button data-action="openTaskModal" data-id="${t.id}" class="task-block absolute left-0.5 right-0.5 rounded-md sm:rounded-lg text-left px-1.5 py-1 overflow-hidden ${done?'opacity-45':''}"
+  <button data-action="openTaskModal" data-id="${t.id}" class="task-block absolute left-0.5 right-0.5 rounded-md sm:rounded-lg text-left px-2 py-1.5 overflow-hidden ${done?'opacity-45':''}"
     style="top:${top}px; height:${height}px; background:${meta.color}${done?'14':'22'}; border:1px ${meta.fixed?'solid':'dashed'} ${meta.color}55;">
-    <div class="text-[9px] sm:text-[10px] font-bold truncate leading-tight flex items-center gap-1" style="color:${meta.color}">
-      ${done?'<i data-lucide=\"check-circle-2\" class=\"w-2.5 h-2.5\"></i>':''}${esc(t.title)}
+    <div class="text-[10px] sm:text-[11.5px] font-bold truncate leading-tight flex items-center gap-1" style="color:${meta.color}">
+      ${done?'<i data-lucide=\"check-circle-2\" class=\"w-3 h-3\"></i>':''}${esc(t.title)}
     </div>
-    ${height>26?`<div class="text-[9px] text-slate-300/80 truncate leading-tight">${fmtTime12(t.start)}</div>`:''}
+    ${height>26?`<div class="text-[10px] text-slate-300/80 truncate leading-tight mt-0.5">${fmtTime12(t.start)}</div>`:''}
   </button>`;
 }
 
@@ -1112,6 +1179,7 @@ function renderModalsRoot(){
     ${lectureModalMarkup()}
     ${roadmapModalMarkup()}
     ${conflictModalMarkup()}
+    ${clearConfirmModalMarkup()}
   </div>`;
 }
 
@@ -1374,6 +1442,20 @@ function conflictModalMarkup(){
   return modalShell('conflictModal','Schedule Conflict Detected','alert-triangle', body);
 }
 
+/* --- Clear-Everything Confirmation Modal (only path that can wipe the schedule) --- */
+function clearConfirmModalMarkup(){
+  const body = `
+    <div class="mb-4 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-sm text-rose-200 leading-relaxed">
+      This deletes every task, roadmap, and performance log entry — for <strong>everyone</strong> sharing this workspace link, not just you. It can't be undone from here.
+    </div>
+    <button data-action="exportJSON" class="w-full mb-3 flex items-center justify-center gap-1.5 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl py-2.5"><i data-lucide="download" class="w-3.5 h-3.5"></i>Export a backup first</button>
+    <div class="flex gap-2">
+      <button data-action="confirmClearAll" class="flex-1 bg-rose-500 hover:bg-rose-400 text-white text-sm font-bold py-2.5 rounded-xl transition">Yes, delete everything</button>
+      <button data-action="cancelClearAll" class="px-4 rounded-xl bg-white/10 hover:bg-white/15 text-sm font-semibold">Cancel</button>
+    </div>`;
+  return modalShell('clearConfirmModal','Confirm: Clear Entire Schedule','alert-triangle', body);
+}
+
 /* ============================================================================================
    ACTIONS
    ============================================================================================ */
@@ -1484,6 +1566,17 @@ const actions = {
   applyPacing(el){ const s = applyPacingScaleUp(el.dataset.id); toast(s.behind?`Scaled up upcoming sessions — targeting ${s.requiredDailyHours}h/day.`:'Already on pace.', 'success'); const root=$('#roadmapModal'); root.outerHTML = roadmapModalMarkup(); openModal('roadmapModal'); lucide.createIcons(); bindGlobalOnce(true); render(); },
 
   cancelConflict(){ pendingConflict = null; closeModal('conflictModal'); },
+
+  confirmClearAll(){
+    state.tasks = [];
+    state.roadmaps = [];
+    state.performanceLog = [];
+    save();
+    closeModal('clearConfirmModal');
+    toast('Schedule cleared — tasks, roadmaps, and performance history wiped.', 'success');
+    render();
+  },
+  cancelClearAll(){ closeModal('clearConfirmModal'); toast('Cancelled — nothing was deleted.'); },
   applyConflictOption(el){
     if(!pendingConflict) return;
     const opt = pendingConflict.options[Number(el.dataset.opt)];
@@ -1755,16 +1848,21 @@ async function handleSendChat(source){
   state.chat.push(thinkingMsg); render(); scrollChatToBottom();
 
   try{
-    const { text: reply, toolCall } = await aiChat(text);
+    const { text: reply, toolCalls } = await aiChat(text);
     state.chat.pop(); // remove thinking bubble
-    let placedNote = '';
-    if(toolCall && toolCall.name==='log_performance'){
-      const course = state.courses.find(c=> toolCall.input.topic && c.name.toLowerCase().includes(toolCall.input.topic.toLowerCase().split(' ')[0]));
-      const placed = logPerformance({ topic: toolCall.input.topic, rating: toolCall.input.rating, note: toolCall.input.note, courseId: course?.id||null });
-      placedNote = `\n\n📌 Logged **${toolCall.input.topic}** as *${toolCall.input.rating}* — ${placed} adaptive review session${placed===1?'':'s'} added to your calendar.`;
-      toast(`Adaptive reschedule: ${placed} review session(s) added for "${toolCall.input.topic}".`, 'success');
+    const notes = [];
+    for(const toolCall of (toolCalls||[])){
+      if(toolCall.name==='log_performance'){
+        const course = state.courses.find(c=> toolCall.input.topic && c.name.toLowerCase().includes(toolCall.input.topic.toLowerCase().split(' ')[0]));
+        const placed = logPerformance({ topic: toolCall.input.topic, rating: toolCall.input.rating, note: toolCall.input.note, courseId: course?.id||null });
+        notes.push(`📌 Logged **${toolCall.input.topic}** as *${toolCall.input.rating}* — ${placed} adaptive review session${placed===1?'':'s'} added to your calendar.`);
+        toast(`Adaptive reschedule: ${placed} review session(s) added for "${toolCall.input.topic}".`, 'success');
+      } else if(toolCall.name==='manage_schedule'){
+        const outcome = handleManageScheduleToolCall(toolCall.input);
+        if(outcome) notes.push(outcome);
+      }
     }
-    state.chat.push({ role:'assistant', content:(reply||'Got it.') + placedNote, ts:Date.now() });
+    state.chat.push({ role:'assistant', content:(reply||'Got it.') + (notes.length?'\n\n'+notes.join('\n'):''), ts:Date.now() });
   }catch(err){
     state.chat.pop();
     state.chat.push({ role:'assistant', content: apiErrorMessage(err), ts:Date.now() });

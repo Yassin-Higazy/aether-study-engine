@@ -1,0 +1,1617 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
+<title>Aether — Autonomous AI Study Engine</title>
+<meta name="description" content="Cross-platform AI study engine, dynamic scheduler, and life manager.">
+<meta name="theme-color" content="#0b0f1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Aether">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%A0%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Aether%20Study%20Engine%22%2C%22short_name%22%3A%22Aether%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230b0f1a%22%2C%22theme_color%22%3A%22%230b0f1a%22%7D">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Inter','ui-sans-serif','system-ui','-apple-system','Segoe UI','Roboto','sans-serif'] },
+        colors: {
+          base: { 950:'#080a12', 900:'#0b0f1a', 850:'#0f1422', 800:'#131a2b', 700:'#1b2438', 600:'#2a3550' },
+        },
+        boxShadow: { glow: '0 0 0 1px rgba(99,102,241,0.15), 0 8px 30px -8px rgba(99,102,241,0.35)' },
+        animation: { 'fade-in':'fadeIn .18s ease-out', 'slide-up':'slideUp .22s ease-out', 'pop':'pop .15s ease-out' },
+        keyframes: {
+          fadeIn: { '0%':{opacity:0}, '100%':{opacity:1} },
+          slideUp: { '0%':{opacity:0, transform:'translateY(8px)'}, '100%':{opacity:1, transform:'translateY(0)'} },
+          pop: { '0%':{transform:'scale(.96)', opacity:0}, '100%':{transform:'scale(1)', opacity:1} },
+        }
+      }
+    }
+  }
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<!-- Client-side document parsers for the Post-Lecture Tracker file upload (PDF / DOCX / TXT) -->
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.7.0/mammoth.browser.min.js"></script>
+<style>
+  html,body{ height:100%; }
+  body{ background:radial-gradient(1200px 800px at 90% -10%, rgba(99,102,241,.10), transparent 60%), radial-gradient(900px 700px at -10% 10%, rgba(56,189,248,.08), transparent 55%), #080a12; }
+  ::-webkit-scrollbar{ width:8px; height:8px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  ::-webkit-scrollbar-thumb{ background:#243050; border-radius:8px; }
+  ::-webkit-scrollbar-thumb:hover{ background:#334066; }
+  * { scrollbar-width: thin; scrollbar-color: #243050 transparent; }
+  .glass{ background:rgba(19,26,43,0.6); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
+  .card{ background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); border:1px solid rgba(148,163,184,0.09); }
+  .no-scrollbar::-webkit-scrollbar{ display:none; }
+  .no-scrollbar{ -ms-overflow-style:none; scrollbar-width:none; }
+  [data-modal]{ display:none; }
+  [data-modal].open{ display:flex; }
+  .task-block{ transition: transform .12s ease, box-shadow .12s ease, filter .12s ease; }
+  .task-block:hover{ transform: translateY(-1px) scale(1.005); filter:brightness(1.08); z-index:20; }
+  .grid-hourline{ border-top:1px dashed rgba(148,163,184,0.10); }
+  .pulse-dot{ animation: pulse-op 2s ease-in-out infinite; }
+  @keyframes pulse-op{ 0%,100%{opacity:1} 50%{opacity:.35} }
+  input[type=range]{ accent-color:#6366f1; }
+  textarea, input, select{ color-scheme: dark; }
+  .chip{ border-radius:9999px; padding:.2rem .6rem; font-size:.7rem; font-weight:600; letter-spacing:.02em; }
+</style>
+</head>
+<body class="text-slate-100 font-sans antialiased selection:bg-indigo-500/40">
+<div id="app"></div>
+
+<script>
+/* ============================================================================================
+   AETHER — AUTONOMOUS AI STUDY ENGINE, DYNAMIC SCHEDULER & LIFE MANAGER
+   Single-file vanilla JS PWA-ready prototype.
+   ============================================================================================ */
+
+/* ---------------------------------- UTILITIES ---------------------------------- */
+const $  = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+const uid = (p='id') => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`;
+const pad2 = n => String(n).padStart(2,'0');
+const todayISO = () => { const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; };
+const isoOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+const addDays = (iso, n) => { const d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return isoOf(d); };
+const dayDiff = (a,b) => Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00'))/86400000);
+const toMin = (hhmm) => { const [h,m]=hhmm.split(':').map(Number); return h*60+m; };
+const toHHMM = (mins) => { mins=((mins%1440)+1440)%1440; return `${pad2(Math.floor(mins/60))}:${pad2(mins%60)}`; };
+const fmtTime12 = (hhmm) => { const [h,m]=hhmm.split(':').map(Number); const ap=h>=12?'PM':'AM'; let hh=h%12; if(hh===0)hh=12; return `${hh}:${pad2(m)} ${ap}`; };
+const fmtDateLong = (iso) => new Date(iso+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'});
+const fmtDateShort = (iso) => new Date(iso+'T00:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'});
+const weekdayLetter = (iso) => new Date(iso+'T00:00:00').toLocaleDateString(undefined,{weekday:'short'});
+const clamp = (n,a,b) => Math.max(a,Math.min(b,n));
+const esc = (s='') => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toast = (msg, kind='info') => {
+  const host = $('#toastHost'); if(!host) return;
+  const id = uid('toast');
+  const colors = { info:'border-indigo-500/40 bg-indigo-500/10 text-indigo-200', success:'border-emerald-500/40 bg-emerald-500/10 text-emerald-200', error:'border-rose-500/40 bg-rose-500/10 text-rose-200', warn:'border-amber-500/40 bg-amber-500/10 text-amber-200' };
+  const icon = { info:'info', success:'check-circle-2', error:'alert-circle', warn:'alert-triangle' }[kind];
+  const el = document.createElement('div');
+  el.id = id;
+  el.className = `glass border ${colors[kind]} rounded-xl px-4 py-3 shadow-2xl flex items-start gap-2.5 animate-slide-up max-w-sm`;
+  el.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4 mt-0.5 shrink-0"></i><div class="text-sm leading-snug">${esc(msg)}</div>`;
+  host.appendChild(el);
+  lucide.createIcons();
+  setTimeout(()=>{ el.style.transition='opacity .25s, transform .25s'; el.style.opacity='0'; el.style.transform='translateX(12px)'; setTimeout(()=>el.remove(),260); }, 4200);
+};
+
+/* ---------------------------------- CONSTANTS ---------------------------------- */
+const STORAGE_KEY = 'aether_study_engine_v1';
+const HOUR_PX = 48;
+const DAY_START_H = 6;
+const DAY_END_H = 24;
+
+const TYPE_META = {
+  class:    { label:'Uni Class',   short:'Class',   color:'#818cf8', dot:'bg-indigo-400',  ring:'ring-indigo-400/40',  icon:'graduation-cap', fixed:true,  weight:100 },
+  exam:     { label:'Major Exam',  short:'Exam',     color:'#fb7185', dot:'bg-rose-400',    ring:'ring-rose-400/40',    icon:'file-warning',   fixed:true,  weight:95 },
+  meeting:  { label:'Fixed Meeting', short:'Meeting',color:'#fbbf24', dot:'bg-amber-400',   ring:'ring-amber-400/40',   icon:'users',          fixed:true,  weight:80 },
+  review:   { label:'AI Review',   short:'Review',   color:'#a78bfa', dot:'bg-violet-400',  ring:'ring-violet-400/40',  icon:'brain-circuit',  fixed:false, weight:50 },
+  gym:      { label:'Gym / Workout', short:'Gym',    color:'#34d399', dot:'bg-emerald-400', ring:'ring-emerald-400/40', icon:'dumbbell',       fixed:false, weight:35 },
+  personal: { label:'Personal',    short:'Personal', color:'#38bdf8', dot:'bg-sky-400',     ring:'ring-sky-400/40',    icon:'user-round',     fixed:false, weight:20 },
+};
+const TYPE_ORDER = ['class','exam','meeting','review','gym','personal'];
+
+const SEED_COURSES = [
+  { id:'course_physics', name:'Physics I — Mechanics', color:'#818cf8' },
+  { id:'course_ochem',   name:'Organic Chemistry', color:'#fb7185' },
+  { id:'course_calc',    name:'Calculus II', color:'#38bdf8' },
+];
+
+function defaultState(){
+  const t = todayISO();
+  return {
+    v: 1,
+    profile: { name:'Student', institution:'', targetInstitution:'', createdAt: Date.now() },
+    apiProvider: 'deepseek', // 'anthropic' | 'openai' | 'deepseek'
+    apiKey: '', // never hardcode a real key here — this file will be public once hosted
+    apiModel: 'deepseek-chat',
+    courses: [],
+    tasks: [],
+    performanceLog: [],
+    roadmaps: [],
+    chat: [ { role:'assistant', content:"Hi — I'm your AI Study Coach. Tell me how a session went (\"I struggled with fluid dynamics today\" or \"aced the practice set\") and I'll adapt your schedule automatically. Add your API key in Settings to enable me.", ts: Date.now() } ],
+    constraints: {
+      maxStudyHoursPerDay: 5,
+      noStudyAfter: '22:00',
+      noStudyBefore: '07:00',
+      preserveWorkout: true,
+      workoutWindows: [ { day:1, start:'18:00', end:'19:00' }, { day:3, start:'18:00', end:'19:00' }, { day:5, start:'17:00', end:'18:00' } ],
+    },
+    view: 'dashboard', // dashboard | weekly | daily
+    dashTab: 'tasks', // tasks | coach
+    selectedDate: t,
+    weekAnchor: t,
+    onboarded: false,
+  };
+}
+
+// Some sandboxed contexts (data: URLs, certain preview iframes, private-mode edge cases)
+// throw on any localStorage access. Detect that once and fall back to an in-memory store
+// so the app stays fully functional for the session even if persistence isn't available.
+let storageAvailable = true;
+try{ const k='__aether_probe__'; localStorage.setItem(k,'1'); localStorage.removeItem(k); }catch(e){ storageAvailable = false; }
+let memoryStore = null;
+
+let state = loadState();
+
+function loadState(){
+  try{
+    if(!storageAvailable) return seedFirstRun(defaultState());
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return seedFirstRun(defaultState());
+    const parsed = JSON.parse(raw);
+    return Object.assign(defaultState(), parsed);
+  }catch(e){ console.error('Failed to load state', e); return seedFirstRun(defaultState()); }
+}
+function save(){
+  if(!storageAvailable){ memoryStore = state; return; }
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  catch(e){ console.error('Failed to persist state', e); storageAvailable = false; memoryStore = state; }
+}
+
+function seedFirstRun(s){
+  s.courses = SEED_COURSES.slice();
+  const t = todayISO();
+  const mk = (o) => ({ id:uid('task'), status:'pending', notes:'', topic:'', roadmapId:null, createdAt:Date.now(), completedAt:null, ...o });
+  s.tasks = [
+    mk({ title:'Physics I Lecture', type:'class', courseId:'course_physics', date:t, start:'09:00', end:'10:15' }),
+    mk({ title:'Organic Chemistry Lab', type:'class', courseId:'course_ochem', date:t, start:'11:00', end:'13:00' }),
+    mk({ title:'Study Group — Calc II', type:'meeting', courseId:'course_calc', date:t, start:'15:00', end:'16:00' }),
+    mk({ title:'Gym — Push Day', type:'gym', courseId:null, date:t, start:'18:00', end:'19:00' }),
+    mk({ title:'Review: Kinematics', type:'review', courseId:'course_physics', date:addDays(t,1), start:'19:00', end:'19:45', topic:'Kinematics' }),
+    mk({ title:'Physics I Lecture', type:'class', courseId:'course_physics', date:addDays(t,1), start:'09:00', end:'10:15' }),
+    mk({ title:'MCAT Full-Length Practice', type:'exam', courseId:null, date:addDays(t,5), start:'08:00', end:'12:00' }),
+    mk({ title:'Gym — Legs', type:'gym', courseId:null, date:addDays(t,2), start:'18:00', end:'19:00' }),
+    mk({ title:'Review: Reaction Mechanisms', type:'review', courseId:'course_ochem', date:addDays(t,2), start:'20:00', end:'20:30', topic:'Reaction Mechanisms' }),
+  ];
+  s.performanceLog = [
+    { id:uid('perf'), topic:'Kinematics', courseId:'course_physics', rating:'ok', note:'Solid on 1D, shaky on projectile motion', date:t, taskId:null },
+  ];
+  return s;
+}
+
+/* ---------------------------------- SCHEDULING ENGINE ---------------------------------- */
+
+function typeWeight(t){ return TYPE_META[t.type]?.weight ?? 10; }
+
+function tasksOnDate(date){ return state.tasks.filter(t=>t.date===date).sort((a,b)=>toMin(a.start)-toMin(b.start)); }
+
+function overlaps(aStart,aEnd,bStart,bEnd){ return toMin(aStart) < toMin(bEnd) && toMin(bStart) < toMin(aEnd); }
+
+// Find conflicting tasks for a candidate task (excluding itself)
+function findConflicts(candidate){
+  return tasksOnDate(candidate.date).filter(t => t.id !== candidate.id && overlaps(candidate.start,candidate.end,t.start,t.end));
+}
+
+// Find next open slot of `durationMin` minutes on/after `date`+`afterMin`, scanning forward up to `maxDaysAhead` days.
+// Respects constraints.noStudyBefore/noStudyAfter and existing tasks (any overlap blocks the slot).
+function findOpenSlot(startDate, durationMin, { afterMin=null, maxDaysAhead=10, dayStart=null, dayEnd=null, excludeId=null } = {}){
+  const c = state.constraints;
+  const lo = dayStart ?? toMin(c.noStudyBefore || '07:00');
+  const hi = dayEnd ?? toMin(c.noStudyAfter || '22:00');
+  for(let d=0; d<=maxDaysAhead; d++){
+    const date = addDays(startDate, d);
+    let cursor = (d===0 && afterMin!=null) ? Math.max(afterMin, lo) : lo;
+    const dayTasks = tasksOnDate(date).filter(t=>t.id!==excludeId).sort((a,b)=>toMin(a.start)-toMin(b.start));
+    // round cursor up to nearest 5 min
+    cursor = Math.ceil(cursor/5)*5;
+    while(cursor + durationMin <= hi){
+      const candStart = toHHMM(cursor), candEnd = toHHMM(cursor+durationMin);
+      const clash = dayTasks.find(t => overlaps(candStart,candEnd,t.start,t.end));
+      if(!clash){ return { date, start:candStart, end:candEnd }; }
+      cursor = Math.max(cursor+5, toMin(clash.end));
+      cursor = Math.ceil(cursor/5)*5;
+    }
+  }
+  return null; // couldn't find a slot
+}
+
+// Generate 3 smart alternative options for a conflicting candidate task.
+function generateConflictOptions(candidate){
+  const dur = toMin(candidate.end) - toMin(candidate.start);
+  const half = Math.max(15, Math.round(dur/2/5)*5);
+  const opts = [];
+
+  // Option A: shift later same day (after 19:00 or after the conflicting block, whichever later)
+  const conflicts = findConflicts(candidate);
+  const latestConflictEnd = conflicts.reduce((m,c)=>Math.max(m,toMin(c.end)), toMin('19:00'));
+  const a = findOpenSlot(candidate.date, dur, { afterMin: latestConflictEnd, maxDaysAhead:0, excludeId:candidate.id });
+  if(a) opts.push({ id:'A', label:`Shift to ${fmtTime12(a.start)} tonight`, detail:`${fmtDateShort(a.date)} · ${fmtTime12(a.start)}–${fmtTime12(a.end)}`, apply:[{ ...candidate, date:a.date, start:a.start, end:a.end }] });
+
+  // Option B: move to early tomorrow
+  const b = findOpenSlot(addDays(candidate.date,1), dur, { afterMin: toMin(state.constraints.noStudyBefore||'07:00'), maxDaysAhead:2, excludeId:candidate.id });
+  if(b) opts.push({ id:'B', label:`Move to ${fmtTime12(b.start)} — ${fmtDateShort(b.date)}`, detail:`${fmtDateShort(b.date)} · ${fmtTime12(b.start)}–${fmtTime12(b.end)}`, apply:[{ ...candidate, date:b.date, start:b.start, end:b.end }] });
+
+  // Option C: split into two halves across open slots
+  const c1 = findOpenSlot(candidate.date, half, { afterMin: toMin(candidate.start), maxDaysAhead:1, excludeId:candidate.id });
+  const c2 = c1 ? findOpenSlot(c1.date, half, { afterMin: toMin(c1.end)+15, maxDaysAhead:1, excludeId:candidate.id }) : null;
+  if(c1 && c2){
+    opts.push({ id:'C', label:`Split into two ${half}-min sessions`, detail:`${fmtDateShort(c1.date)} ${fmtTime12(c1.start)} + ${fmtDateShort(c2.date)} ${fmtTime12(c2.start)}`,
+      apply:[ { ...candidate, id:candidate.id, title:candidate.title+' (Part 1)', date:c1.date, start:c1.start, end:c1.end },
+              { ...candidate, id:uid('task'), title:candidate.title+' (Part 2)', date:c2.date, start:c2.start, end:c2.end } ] });
+  }
+
+  // Fallback D if we couldn't build 3 — push further out
+  while(opts.length < 3){
+    const fb = findOpenSlot(candidate.date, dur, { afterMin: toMin('06:00'), maxDaysAhead: 3 + opts.length, excludeId:candidate.id });
+    if(!fb) break;
+    const key = `${fb.date}_${fb.start}`;
+    if(opts.some(o=>o.detail.includes(fmtTime12(fb.start)) && o.detail.includes(fmtDateShort(fb.date)))) break;
+    opts.push({ id:String.fromCharCode(65+opts.length), label:`Reschedule to ${fmtDateShort(fb.date)}, ${fmtTime12(fb.start)}`, detail:`${fmtDateShort(fb.date)} · ${fmtTime12(fb.start)}–${fmtTime12(fb.end)}`, apply:[{ ...candidate, date:fb.date, start:fb.start, end:fb.end }] });
+  }
+  return opts.slice(0,3);
+}
+
+// Silent auto-placement used by batch schedulers (lecture tracker / roadmap). Returns {date,start,end} or null.
+function autoPlace(preferredDate, durationMin, opts={}){ return findOpenSlot(preferredDate, durationMin, { afterMin: toMin('16:00'), maxDaysAhead:10, ...opts }); }
+
+/* ---------------------------------- PACING SCALE-UP ENGINE ---------------------------------- */
+function pacingStatusForRoadmap(rm){
+  const days = Math.max(1, dayDiff(todayISO(), rm.examDate));
+  const total = rm.topics.length;
+  const done = rm.topics.filter(t=>t.done).length;
+  const remaining = total - done;
+  const remainingHours = rm.topics.filter(t=>!t.done).reduce((s,t)=>s+(t.estimatedHours||1),0);
+  const requiredDailyHours = +(remainingHours / days).toFixed(2);
+  const expectedDoneByNow = total>0 ? Math.round(total * (1 - days/Math.max(1,dayDiff(rm.createdDate||todayISO(), rm.examDate)))) : 0;
+  const behind = done < expectedDoneByNow - 1 || requiredDailyHours > state.constraints.maxStudyHoursPerDay;
+  return { days, total, done, remaining, remainingHours, requiredDailyHours, behind };
+}
+
+function applyPacingScaleUp(roadmapId){
+  const rm = state.roadmaps.find(r=>r.id===roadmapId); if(!rm) return null;
+  const status = pacingStatusForRoadmap(rm);
+  if(!status.behind) return status;
+  const cap = state.constraints.maxStudyHoursPerDay * 60;
+  const upcoming = state.tasks.filter(t=>t.roadmapId===roadmapId && t.status==='pending' && t.date>=todayISO()).sort((a,b)=>a.date.localeCompare(b.date));
+  let scaled = 0;
+  upcoming.slice(0,4).forEach(t=>{
+    const dur = toMin(t.end)-toMin(t.start);
+    const newDur = clamp(Math.round(dur*1.4/5)*5, dur, 90);
+    if(newDur>dur){
+      const dayTotal = tasksOnDate(t.date).filter(x=>x.type==='review').reduce((s,x)=>s+(toMin(x.end)-toMin(x.start)),0);
+      if(dayTotal - dur + newDur <= cap){ t.end = toHHMM(toMin(t.start)+newDur); scaled++; }
+    }
+  });
+  if(scaled>0) save();
+  return status;
+}
+
+/* ---------------------------------- AI ENGINE (Anthropic / OpenAI) ---------------------------------- */
+
+const TOOLS = {
+  generate_roadmap: {
+    name:'generate_roadmap',
+    description:'Produce a structured, tailored study roadmap of topics with estimated study hours and priority, based on the exam/goal, target institution, and course requirements the user provided.',
+    input_schema:{ type:'object', properties:{
+      summary:{ type:'string', description:'One or two sentence overview of the plan/strategy.' },
+      topics:{ type:'array', description:'Ordered list of syllabus topics to study.', items:{ type:'object', properties:{
+        name:{ type:'string' }, estimated_hours:{ type:'number', description:'Total hours needed to master this topic, e.g. 2.5' }, priority:{ type:'string', enum:['high','medium','low'] }
+      }, required:['name','estimated_hours','priority'] } }
+    }, required:['summary','topics'] }
+  },
+  extract_topics: {
+    name:'extract_topics',
+    description:'Extract a clean, deduplicated list of concise topic names from freeform lecture notes or a description of what was covered in class today.',
+    input_schema:{ type:'object', properties:{
+      topics:{ type:'array', items:{ type:'string' }, description:"Concise topic names, e.g. 'Fluid Dynamics', 'Bernoulli's Principle'" },
+      course_hint:{ type:'string', description:'Best-guess course name these topics belong to, if inferable.' }
+    }, required:['topics'] }
+  },
+  log_performance: {
+    name:'log_performance',
+    description:'Call this whenever the user reports how a study session, practice set, or exam went for a specific topic — whether they struggled, did okay, or aced it. This triggers adaptive rescheduling.',
+    input_schema:{ type:'object', properties:{
+      topic:{ type:'string' }, rating:{ type:'string', enum:['struggled','ok','aced'] }, note:{ type:'string' }
+    }, required:['topic','rating'] }
+  }
+};
+
+function hasApiKey(){ return !!(state.apiKey && state.apiKey.trim().length>4); }
+
+// Anthropic, OpenAI, and DeepSeek are all reachable from the browser and share enough shape
+// that only Anthropic needs its own request/response mapping — OpenAI and DeepSeek both speak
+// the OpenAI-compatible chat-completions + function-calling wire format.
+const PROVIDER_META = {
+  anthropic: { label:'Anthropic', defaultModel:'claude-opus-5', keyPlaceholder:'sk-ant-...' },
+  openai:    { label:'OpenAI',    defaultModel:'gpt-4o',        keyPlaceholder:'sk-...', endpoint:'https://api.openai.com/v1/chat/completions' },
+  deepseek:  { label:'DeepSeek',  defaultModel:'deepseek-chat', keyPlaceholder:'sk-...', endpoint:'https://api.deepseek.com/chat/completions' },
+};
+function providerLabel(p=state.apiProvider){ return PROVIDER_META[p]?.label || p; }
+
+// Unified call: returns { text, toolCall: {name, input} | null }
+async function callAI({ system, messages, tool=null, forceTool=false, maxTokens=1400 }){
+  if(!hasApiKey()) throw new Error('NO_KEY');
+  if(state.apiProvider === 'anthropic') return callAnthropic({ system, messages, tool, forceTool, maxTokens });
+  const meta = PROVIDER_META[state.apiProvider] || PROVIDER_META.openai;
+  return callOpenAICompatible(meta.endpoint, meta.label, { system, messages, tool, forceTool, maxTokens });
+}
+
+async function callAnthropic({ system, messages, tool, forceTool, maxTokens }){
+  const body = {
+    model: state.apiModel || 'claude-opus-5',
+    max_tokens: maxTokens,
+    system,
+    messages,
+  };
+  if(tool){
+    body.tools = [TOOLS[tool]];
+    body.tool_choice = forceTool ? { type:'tool', name: tool } : { type:'auto' };
+  }
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'content-type':'application/json',
+      'x-api-key': state.apiKey.trim(),
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify(body)
+  });
+  if(!res.ok){
+    const errBody = await res.json().catch(()=>({}));
+    throw new Error(errBody?.error?.message || `Anthropic API error (${res.status})`);
+  }
+  const data = await res.json();
+  let text = '', toolCall = null;
+  for(const block of (data.content||[])){
+    if(block.type==='text') text += block.text;
+    if(block.type==='tool_use') toolCall = { name: block.name, input: block.input };
+  }
+  return { text, toolCall, raw:data };
+}
+
+// Shared by OpenAI and DeepSeek — both implement the OpenAI chat-completions + tool-calling shape.
+async function callOpenAICompatible(endpoint, providerLabelStr, { system, messages, tool, forceTool, maxTokens }){
+  const oaMessages = [ { role:'system', content: system }, ...messages.map(m=>({ role: m.role==='assistant'?'assistant':'user', content: m.content })) ];
+  const body = { model: state.apiModel || 'gpt-4o', max_tokens: maxTokens, messages: oaMessages };
+  if(tool){
+    const t = TOOLS[tool];
+    body.tools = [{ type:'function', function:{ name:t.name, description:t.description, parameters:t.input_schema } }];
+    body.tool_choice = forceTool ? { type:'function', function:{ name: tool } } : 'auto';
+  }
+  const res = await fetch(endpoint, {
+    method:'POST',
+    headers:{ 'content-type':'application/json', 'Authorization': `Bearer ${state.apiKey.trim()}` },
+    body: JSON.stringify(body)
+  });
+  if(!res.ok){
+    const errBody = await res.json().catch(()=>({}));
+    throw new Error(errBody?.error?.message || `${providerLabelStr} API error (${res.status})`);
+  }
+  const data = await res.json();
+  const choice = data.choices?.[0]?.message;
+  let toolCall = null;
+  if(choice?.tool_calls?.length){
+    const tc = choice.tool_calls[0];
+    try{ toolCall = { name: tc.function.name, input: JSON.parse(tc.function.arguments) }; }catch(e){ toolCall = null; }
+  }
+  return { text: choice?.content || '', toolCall, raw:data };
+}
+
+function apiErrorMessage(e){
+  if(e.message==='NO_KEY') return 'Add your API key in Settings to enable AI features.';
+  if(/401|authentic/i.test(e.message)) return 'Your API key was rejected (401). Check it in Settings.';
+  if(/429|rate/i.test(e.message)) return 'Rate limited by the AI provider — try again shortly.';
+  return `AI request failed: ${e.message}`;
+}
+
+/* ------- High-level AI actions ------- */
+
+async function aiGenerateRoadmap({ goal, examDate, institution, courseNotes }){
+  const sys = `You are Aether, an autonomous AI study planning engine embedded in a student productivity app. Produce highly accurate, tailored study roadmaps. Be concrete and use realistic hour estimates. Always call the generate_roadmap tool with your result — do not respond in plain text.`;
+  const userMsg = `Goal / target exam: ${goal}\nTarget date: ${examDate}\nTarget institution / context: ${institution || 'n/a'}\nCourse requirements / notes: ${courseNotes || 'n/a'}\n\nBreak this into a realistic, comprehensive syllabus of topics with estimated study hours (be granular — 8 to 20 topics) and a priority for each, ordered logically for study sequencing.`;
+  const { toolCall } = await callAI({ system:sys, messages:[{role:'user',content:userMsg}], tool:'generate_roadmap', forceTool:true, maxTokens:2000 });
+  if(!toolCall) throw new Error('Model did not return structured roadmap data.');
+  return toolCall.input;
+}
+
+async function aiExtractTopics({ courseName, coverageText }){
+  const sys = `You are Aether, an AI study engine. Extract clean, concise, deduplicated topic names from what a student says they covered in class. Always call the extract_topics tool.`;
+  const userMsg = `Course: ${courseName || 'unspecified'}\nWhat was covered today:\n"""\n${coverageText}\n"""`;
+  const { toolCall } = await callAI({ system:sys, messages:[{role:'user',content:userMsg}], tool:'extract_topics', forceTool:true, maxTokens:800 });
+  if(!toolCall) throw new Error('Model did not return structured topic data.');
+  return toolCall.input;
+}
+
+async function aiChat(userText){
+  const sys = `You are Aether, a warm, sharp, no-nonsense AI study coach embedded in the user's scheduling app. You can see the user's rough context below. When the user reports how a study session, topic, or practice test went, call the log_performance tool (in addition to a short reply) so the app can adaptively reschedule review sessions. Keep replies concise (2-4 sentences), encouraging, and specific. Priority order the app enforces: Fixed Uni Classes > Major Exams > Fixed Meetings > Self-Paced AI Review > Gym/Personal.
+
+Context:
+- Courses: ${state.courses.map(c=>c.name).join(', ') || 'none yet'}
+- Upcoming roadmaps: ${state.roadmaps.map(r=>`${r.examName} (${r.examDate})`).join('; ') || 'none'}
+- Recent performance: ${state.performanceLog.slice(-5).map(p=>`${p.topic}: ${p.rating}`).join('; ') || 'none logged yet'}
+- Today: ${todayISO()}`;
+  const history = state.chat.slice(-10).map(m=>({ role: m.role==='assistant'?'assistant':'user', content: m.content }));
+  const { text, toolCall } = await callAI({ system:sys, messages:[...history, {role:'user', content:userText}], tool:'log_performance', forceTool:false, maxTokens:700 });
+  return { text, toolCall };
+}
+
+/* ---------------------------------- ADAPTIVE SPACED REPETITION ---------------------------------- */
+
+function reEnqueueTopicForReview(topic, courseId, rating){
+  // Intervals in days depending on how it went. Struggled -> sooner & more sessions; aced -> longer, lighter check.
+  const plans = {
+    struggled: [1, 3, 6],
+    ok:        [2, 5],
+    aced:      [7],
+  };
+  const days = plans[rating] || [3];
+  const course = state.courses.find(c=>c.id===courseId);
+  let placed = 0;
+  days.forEach((offset, i)=>{
+    const dur = rating==='struggled' ? 45 : (rating==='ok' ? 35 : 25);
+    const preferred = addDays(todayISO(), offset);
+    const slot = autoPlace(preferred, dur, { afterMin: toMin('16:00'), maxDaysAhead:3 });
+    if(slot){
+      state.tasks.push({ id:uid('task'), title:`Review: ${topic}`, type:'review', courseId: courseId||null, date:slot.date, start:slot.start, end:slot.end, status:'pending', notes: rating==='struggled' ? 'Adaptive follow-up — flagged as a weak area.' : 'Spaced-repetition check-in.', topic, roadmapId:null, createdAt:Date.now(), completedAt:null });
+      placed++;
+    }
+  });
+  save();
+  return placed;
+}
+
+function logPerformance({ topic, rating, note, courseId=null }){
+  state.performanceLog.push({ id:uid('perf'), topic, courseId, rating, note: note||'', date: todayISO(), taskId:null });
+  const placed = reEnqueueTopicForReview(topic, courseId, rating);
+  save();
+  return placed;
+}
+
+/* ---------------------------------- EXPORT / IMPORT ---------------------------------- */
+
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `aether-backup-${todayISO()}.json`; a.click();
+  URL.revokeObjectURL(url);
+  toast('Backup exported as .json', 'success');
+}
+
+function importJSONFile(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const parsed = JSON.parse(reader.result);
+      if(!parsed.tasks || !Array.isArray(parsed.tasks)) throw new Error('Not a valid Aether backup file.');
+      state = Object.assign(defaultState(), parsed);
+      save(); render();
+      toast('Backup restored successfully.', 'success');
+    }catch(e){ toast('Import failed: '+e.message, 'error'); }
+  };
+  reader.readAsText(file);
+}
+
+function icsEscape(s=''){ return String(s).replace(/[\\;,]/g, m=>'\\'+m).replace(/\n/g,'\\n'); }
+function icsDate(date, time){ const [Y,M,D]=date.split('-'); const [h,m]=time.split(':'); return `${Y}${M}${D}T${h}${m}00`; }
+
+function exportICS(){
+  const lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Aether Study Engine//EN','CALSCALE:GREGORIAN'];
+  state.tasks.forEach(t=>{
+    lines.push('BEGIN:VEVENT');
+    lines.push(`UID:${t.id}@aether.local`);
+    lines.push(`DTSTAMP:${icsDate(todayISO(), '00:00')}Z`);
+    lines.push(`DTSTART:${icsDate(t.date, t.start)}`);
+    lines.push(`DTEND:${icsDate(t.date, t.end)}`);
+    lines.push(`SUMMARY:${icsEscape(`[${TYPE_META[t.type].short}] ${t.title}`)}`);
+    if(t.notes) lines.push(`DESCRIPTION:${icsEscape(t.notes)}`);
+    lines.push(`STATUS:${t.status==='completed'?'CONFIRMED':'TENTATIVE'}`);
+    lines.push('END:VEVENT');
+  });
+  lines.push('END:VCALENDAR');
+  const blob = new Blob([lines.join('\r\n')], { type:'text/calendar' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `aether-calendar-${todayISO()}.ics`; a.click();
+  URL.revokeObjectURL(url);
+  toast('Calendar exported as .ics — import into Google/Apple Calendar.', 'success');
+}
+
+/* ============================================================================================
+   RENDERING
+   ============================================================================================ */
+
+function render(){
+  const app = $('#app');
+  app.innerHTML = `
+    ${renderNavbar()}
+    ${!storageAvailable ? `<div class="fixed top-16 inset-x-0 z-30 bg-amber-500/15 border-b border-amber-500/25 text-amber-200 text-[11px] sm:text-xs text-center py-1.5 px-3">
+      <i data-lucide="alert-triangle" class="w-3 h-3 inline -mt-0.5 mr-1"></i>Local storage is unavailable in this preview context — your data will persist for this session only. Open the file directly in a browser tab for full persistence.
+    </div>` : ''}
+    <main class="pt-16 ${!storageAvailable?'mt-7':''} pb-24 lg:pb-8 min-h-screen">
+      <div class="max-w-[1600px] mx-auto px-3 sm:px-5 lg:px-8 py-5">
+        ${state.view==='dashboard' ? renderDashboard() : ''}
+        ${state.view==='weekly' ? renderWeeklyView() : ''}
+        ${state.view==='daily' ? renderDailyView() : ''}
+      </div>
+    </main>
+    ${renderMobileTabbar()}
+    ${renderFAB()}
+    ${renderChatDrawer()}
+    ${renderModalsRoot()}
+    <div id="toastHost" class="fixed bottom-4 right-4 z-[80] flex flex-col gap-2 items-end"></div>
+  `;
+  lucide.createIcons();
+  bindGlobalOnce();
+}
+
+function renderNavbar(){
+  const aiOn = hasApiKey();
+  return `
+  <header class="fixed top-0 inset-x-0 z-40 h-16 glass border-b border-white/5">
+    <div class="max-w-[1600px] mx-auto h-full px-3 sm:px-5 lg:px-8 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-glow">
+          <i data-lucide="brain-circuit" class="w-5 h-5 text-white"></i>
+        </div>
+        <div class="hidden sm:block">
+          <div class="text-sm font-bold tracking-tight leading-none">Aether</div>
+          <div class="text-[10px] text-slate-400 leading-none mt-0.5">Study Engine</div>
+        </div>
+      </div>
+
+      <div class="hidden md:flex items-center gap-1 bg-base-850/80 border border-white/5 rounded-xl p-1">
+        ${viewTabBtn('dashboard','layout-dashboard','Dual Split')}
+        ${viewTabBtn('weekly','calendar-days','Weekly')}
+        ${viewTabBtn('daily','clock','Daily')}
+      </div>
+
+      <div class="flex items-center gap-1.5 sm:gap-2">
+        <button data-action="openRoadmapModal" class="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25 border border-indigo-500/20 transition">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Roadmap
+        </button>
+        <button data-action="openLectureModal" class="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition">
+          <i data-lucide="notebook-pen" class="w-3.5 h-3.5"></i> Post-Lecture
+        </button>
+        <button data-action="openTaskModal" class="flex items-center gap-1.5 text-xs font-semibold px-2.5 sm:px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition">
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i><span class="hidden sm:inline">New Task</span>
+        </button>
+        <div class="w-px h-6 bg-white/10 mx-0.5 hidden sm:block"></div>
+        <button data-action="toggleChat" class="relative flex items-center gap-1.5 text-xs font-semibold px-2.5 sm:px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition">
+          <i data-lucide="message-circle" class="w-3.5 h-3.5"></i><span class="hidden sm:inline">Coach</span>
+          <span class="w-1.5 h-1.5 rounded-full ${aiOn?'bg-emerald-400':'bg-slate-500'} absolute -top-0.5 -right-0.5 ${aiOn?'pulse-dot':''}"></span>
+        </button>
+        <button data-action="openSettingsModal" class="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition" title="Settings & API key">
+          <i data-lucide="settings-2" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    </div>
+  </header>`;
+}
+
+function viewTabBtn(view, icon, label){
+  const active = state.view===view;
+  return `<button data-action="setView" data-view="${view}" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition ${active?'bg-indigo-500 text-white shadow':'text-slate-400 hover:text-slate-200'}">
+    <i data-lucide="${icon}" class="w-3.5 h-3.5"></i>${label}
+  </button>`;
+}
+
+function renderMobileTabbar(){
+  return `
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-40 glass border-t border-white/5 px-2 py-2 flex items-center justify-around">
+    ${mobileTab('dashboard','layout-dashboard','Split')}
+    ${mobileTab('weekly','calendar-days','Week')}
+    ${mobileTab('daily','clock','Day')}
+    <button data-action="openLectureModal" class="flex flex-col items-center gap-0.5 px-3 py-1 text-slate-400">
+      <i data-lucide="notebook-pen" class="w-5 h-5"></i><span class="text-[10px] font-medium">Lecture</span>
+    </button>
+    <button data-action="openRoadmapModal" class="flex flex-col items-center gap-0.5 px-3 py-1 text-slate-400">
+      <i data-lucide="sparkles" class="w-5 h-5"></i><span class="text-[10px] font-medium">Roadmap</span>
+    </button>
+  </nav>`;
+}
+function mobileTab(view, icon, label){
+  const active = state.view===view;
+  return `<button data-action="setView" data-view="${view}" class="flex flex-col items-center gap-0.5 px-3 py-1 ${active?'text-indigo-400':'text-slate-400'}">
+    <i data-lucide="${icon}" class="w-5 h-5"></i><span class="text-[10px] font-medium">${label}</span>
+  </button>`;
+}
+
+function renderFAB(){
+  return `
+  <button data-action="toggleChat" class="hidden lg:flex fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 shadow-glow items-center justify-center hover:scale-105 active:scale-95 transition">
+    <i data-lucide="message-circle" class="w-6 h-6 text-white"></i>
+  </button>`;
+}
+
+/* ---------------------------------- DASHBOARD (Dual Split) ---------------------------------- */
+
+function renderDashboard(){
+  return `
+  <div class="animate-fade-in">
+    ${renderStatsRow()}
+    <div class="mt-5 grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-5">
+      <section class="card rounded-2xl p-4 sm:p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold flex items-center gap-2"><i data-lucide="calendar-range" class="w-4 h-4 text-indigo-400"></i>Interactive Calendar Grid</h2>
+          <div class="flex items-center gap-1.5">
+            <button data-action="shiftWeek" data-dir="-1" class="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+            <div class="text-xs font-semibold text-slate-300 px-2">${fmtDateShort(state.weekAnchor)} – ${fmtDateShort(addDays(state.weekAnchor,6))}</div>
+            <button data-action="shiftWeek" data-dir="1" class="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+          </div>
+        </div>
+        ${weeklyGridMarkup(state.weekAnchor, true)}
+      </section>
+
+      <section class="card rounded-2xl p-4 sm:p-5 flex flex-col max-h-[720px]">
+        <div class="flex items-center gap-1 bg-base-850/80 border border-white/5 rounded-xl p-1 mb-4 w-full">
+          <button data-action="setDashTab" data-tab="tasks" class="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition ${state.dashTab==='tasks'?'bg-indigo-500 text-white':'text-slate-400 hover:text-slate-200'}"><i data-lucide="list-checks" class="w-3.5 h-3.5"></i>Tasks</button>
+          <button data-action="setDashTab" data-tab="coach" class="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition ${state.dashTab==='coach'?'bg-indigo-500 text-white':'text-slate-400 hover:text-slate-200'}"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i>AI Assistant</button>
+        </div>
+        ${state.dashTab==='tasks' ? renderTaskListPanel() : renderInlineCoach()}
+      </section>
+    </div>
+  </div>`;
+}
+
+function renderStatsRow(){
+  const t = todayISO();
+  const todays = tasksOnDate(t);
+  const doneToday = todays.filter(x=>x.status==='completed').length;
+  const pctToday = todays.length ? Math.round(100*doneToday/todays.length) : 0;
+  const upcomingExams = state.roadmaps.slice().sort((a,b)=>a.examDate.localeCompare(b.examDate))[0];
+  const weakTopics = state.performanceLog.filter(p=>p.rating==='struggled').slice(-3);
+  const studyHoursWeek = state.tasks.filter(t=>t.type==='review' && dayDiff(state.weekAnchor,t.date)>=0 && dayDiff(state.weekAnchor,t.date)<7).reduce((s,x)=>s+(toMin(x.end)-toMin(x.start))/60,0);
+
+  return `
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div class="card rounded-2xl p-4">
+      <div class="flex items-center justify-between mb-2"><span class="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Today's Progress</span><i data-lucide="target" class="w-4 h-4 text-indigo-400"></i></div>
+      <div class="text-2xl font-extrabold">${pctToday}%</div>
+      <div class="text-[11px] text-slate-400 mt-1">${doneToday}/${todays.length} tasks completed</div>
+      <div class="h-1.5 rounded-full bg-white/5 mt-2 overflow-hidden"><div class="h-full bg-gradient-to-r from-indigo-500 to-violet-500" style="width:${pctToday}%"></div></div>
+    </div>
+    <div class="card rounded-2xl p-4">
+      <div class="flex items-center justify-between mb-2"><span class="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Next Deadline</span><i data-lucide="alarm-clock" class="w-4 h-4 text-rose-400"></i></div>
+      ${upcomingExams ? `<div class="text-sm font-bold truncate">${esc(upcomingExams.examName)}</div><div class="text-[11px] text-slate-400 mt-1">${Math.max(0,dayDiff(t,upcomingExams.examDate))} days away · ${fmtDateShort(upcomingExams.examDate)}</div>` : `<div class="text-sm text-slate-500 mt-1">No roadmap yet</div>`}
+    </div>
+    <div class="card rounded-2xl p-4">
+      <div class="flex items-center justify-between mb-2"><span class="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Review Hours (wk)</span><i data-lucide="brain-circuit" class="w-4 h-4 text-violet-400"></i></div>
+      <div class="text-2xl font-extrabold">${studyHoursWeek.toFixed(1)}h</div>
+      <div class="text-[11px] text-slate-400 mt-1">cap ${state.constraints.maxStudyHoursPerDay}h/day</div>
+    </div>
+    <div class="card rounded-2xl p-4">
+      <div class="flex items-center justify-between mb-2"><span class="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Weak Areas</span><i data-lucide="flame" class="w-4 h-4 text-amber-400"></i></div>
+      ${weakTopics.length ? `<div class="flex flex-wrap gap-1 mt-1">${weakTopics.map(w=>`<span class="chip bg-amber-500/10 text-amber-300 border border-amber-500/20">${esc(w.topic)}</span>`).join('')}</div>` : `<div class="text-sm text-slate-500 mt-1">None flagged</div>`}
+    </div>
+  </div>`;
+}
+
+function renderTaskListPanel(){
+  const groups = {};
+  const upcoming = state.tasks.slice().filter(t=>dayDiff(todayISO(),t.date) >= -1).sort((a,b)=> a.date===b.date ? toMin(a.start)-toMin(b.start) : a.date.localeCompare(b.date));
+  upcoming.forEach(t=>{ (groups[t.date] ||= []).push(t); });
+  const dates = Object.keys(groups).sort().slice(0,8);
+  return `
+  <div class="flex-1 overflow-y-auto no-scrollbar pr-1 space-y-4">
+    ${dates.length===0 ? emptyState('list-x','No tasks yet','Create a task or generate a roadmap to get started.') : dates.map(d=>`
+      <div>
+        <div class="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2 sticky top-0 flex items-center gap-2">
+          ${d===todayISO()?'Today':fmtDateLong(d)}
+          <span class="h-px flex-1 bg-white/5"></span>
+        </div>
+        <div class="space-y-2">${groups[d].map(taskListRow).join('')}</div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+function taskListRow(t){
+  const meta = TYPE_META[t.type];
+  const course = state.courses.find(c=>c.id===t.courseId);
+  const done = t.status==='completed';
+  return `
+  <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-white/5 hover:border-white/10 bg-white/[0.02] hover:bg-white/[0.04] transition ${done?'opacity-50':''}" data-task-row="${t.id}">
+    <button data-action="toggleTaskStatus" data-id="${t.id}" class="shrink-0 w-5 h-5 rounded-full border-2 ${done?'bg-emerald-500 border-emerald-500':'border-slate-500 hover:border-indigo-400'} flex items-center justify-center transition">
+      ${done ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+    </button>
+    <div class="w-1.5 h-8 rounded-full shrink-0" style="background:${meta.color}"></div>
+    <div class="min-w-0 flex-1 cursor-pointer" data-action="openTaskModal" data-id="${t.id}">
+      <div class="text-sm font-semibold truncate ${done?'line-through decoration-emerald-400/60':''}">${esc(t.title)}</div>
+      <div class="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+        <i data-lucide="clock" class="w-3 h-3"></i>${fmtTime12(t.start)}–${fmtTime12(t.end)}
+        ${course?`<span class="text-slate-600">·</span><span class="truncate">${esc(course.name)}</span>`:''}
+      </div>
+    </div>
+    <span class="chip shrink-0" style="background:${meta.color}22;color:${meta.color};border:1px solid ${meta.color}40">${meta.short}</span>
+  </div>`;
+}
+
+function renderInlineCoach(){
+  return `
+  <div class="flex-1 flex flex-col min-h-0">
+    ${chatMessagesMarkup(true)}
+    ${chatInputMarkup(true)}
+  </div>`;
+}
+
+function emptyState(icon, title, sub){
+  return `<div class="flex flex-col items-center justify-center text-center py-10 text-slate-500">
+    <i data-lucide="${icon}" class="w-8 h-8 mb-2 opacity-50"></i>
+    <div class="text-sm font-semibold text-slate-400">${title}</div>
+    <div class="text-xs mt-1 max-w-[220px]">${sub}</div>
+  </div>`;
+}
+
+/* ---------------------------------- WEEKLY GRID VIEW ---------------------------------- */
+
+function renderWeeklyView(){
+  return `
+  <div class="animate-fade-in card rounded-2xl p-4 sm:p-5">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <h2 class="text-base font-bold flex items-center gap-2"><i data-lucide="calendar-days" class="w-5 h-5 text-indigo-400"></i>7-Day Weekly Grid</h2>
+      <div class="flex items-center gap-2">
+        <button data-action="shiftWeek" data-dir="-1" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+        <div class="text-sm font-semibold text-slate-300 px-2 min-w-[150px] text-center">${fmtDateShort(state.weekAnchor)} – ${fmtDateShort(addDays(state.weekAnchor,6))}</div>
+        <button data-action="shiftWeek" data-dir="1" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+        <button data-action="gotoToday" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 ml-1">Today</button>
+      </div>
+    </div>
+    ${legendMarkup()}
+    ${weeklyGridMarkup(state.weekAnchor, false)}
+  </div>`;
+}
+
+function legendMarkup(){
+  return `<div class="flex flex-wrap items-center gap-2 mb-4">
+    ${TYPE_ORDER.map(k=>`<span class="chip flex items-center gap-1.5" style="background:${TYPE_META[k].color}18;color:${TYPE_META[k].color};border:1px solid ${TYPE_META[k].color}35"><span class="w-1.5 h-1.5 rounded-full" style="background:${TYPE_META[k].color}"></span>${TYPE_META[k].label}</span>`).join('')}
+    <span class="chip bg-white/5 text-slate-400 border border-white/10 border-dashed ml-1">Dashed = flexible</span>
+  </div>`;
+}
+
+function weeklyGridMarkup(anchor, compact){
+  const days = Array.from({length:7}, (_,i)=>addDays(anchor,i));
+  const hourStart = DAY_START_H, hourEnd = DAY_END_H;
+  const totalH = (hourEnd-hourStart)*HOUR_PX;
+  const rowH = compact ? HOUR_PX*0.72 : HOUR_PX;
+  const gridTotalH = (hourEnd-hourStart)*rowH;
+
+  return `
+  <div class="overflow-x-auto no-scrollbar -mx-1">
+    <div class="min-w-[720px] px-1">
+      <div class="grid grid-cols-[44px_repeat(7,1fr)] gap-0">
+        <div></div>
+        ${days.map(d=>`
+          <div class="text-center pb-2 ${d===todayISO()?'text-indigo-300':'text-slate-400'}">
+            <div class="text-[10px] uppercase font-bold tracking-wide">${weekdayLetter(d)}</div>
+            <button data-action="viewDay" data-date="${d}" class="text-sm font-extrabold mt-0.5 w-7 h-7 rounded-full mx-auto flex items-center justify-center hover:bg-white/10 transition ${d===todayISO()?'bg-indigo-500 text-white':''}">${d.slice(8)}</button>
+          </div>`).join('')}
+      </div>
+      <div class="grid grid-cols-[44px_repeat(7,1fr)] gap-0 relative" style="height:${gridTotalH}px">
+        <div class="relative">
+          ${Array.from({length:hourEnd-hourStart}, (_,i)=>`<div class="absolute right-1 -translate-y-2 text-[10px] text-slate-500 font-medium" style="top:${i*rowH}px">${fmtTime12(toHHMM((hourStart+i)*60)).replace(':00','')}</div>`).join('')}
+        </div>
+        ${days.map(d=>dayColumnMarkup(d, hourStart, hourEnd, rowH, compact)).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function dayColumnMarkup(date, hourStart, hourEnd, rowH, compact){
+  const dayTasks = tasksOnDate(date);
+  const isToday = date===todayISO();
+  const nowMin = isToday ? (new Date().getHours()*60+new Date().getMinutes()) : null;
+  return `
+  <div class="relative border-l border-white/5 ${isToday?'bg-indigo-500/[0.04]':''}" data-drop-date="${date}">
+    ${Array.from({length:hourEnd-hourStart}, (_,i)=>`<div class="grid-hourline absolute inset-x-0" style="top:${i*rowH}px;height:${rowH}px"></div>`).join('')}
+    ${isToday && nowMin!=null && nowMin>=hourStart*60 && nowMin<=hourEnd*60 ? `<div class="absolute inset-x-0 h-px bg-rose-400 z-10" style="top:${((nowMin-hourStart*60)/60)*rowH}px"><div class="w-1.5 h-1.5 rounded-full bg-rose-400 -mt-[3px] -ml-0.5"></div></div>` : ''}
+    ${dayTasks.map(t=>weekBlockMarkup(t, hourStart, rowH, compact)).join('')}
+  </div>`;
+}
+
+function weekBlockMarkup(t, hourStart, rowH, compact){
+  const meta = TYPE_META[t.type];
+  const startMin = toMin(t.start) - hourStart*60;
+  const durMin = Math.max(15, toMin(t.end)-toMin(t.start));
+  const top = (startMin/60)*rowH;
+  const height = Math.max(compact?14:18, (durMin/60)*rowH - 2);
+  const done = t.status==='completed';
+  return `
+  <button data-action="openTaskModal" data-id="${t.id}" class="task-block absolute left-0.5 right-0.5 rounded-md sm:rounded-lg text-left px-1.5 py-1 overflow-hidden ${done?'opacity-45':''}"
+    style="top:${top}px; height:${height}px; background:${meta.color}${done?'14':'22'}; border:1px ${meta.fixed?'solid':'dashed'} ${meta.color}55;">
+    <div class="text-[9px] sm:text-[10px] font-bold truncate leading-tight flex items-center gap-1" style="color:${meta.color}">
+      ${done?'<i data-lucide=\"check-circle-2\" class=\"w-2.5 h-2.5\"></i>':''}${esc(t.title)}
+    </div>
+    ${height>26?`<div class="text-[9px] text-slate-300/80 truncate leading-tight">${fmtTime12(t.start)}</div>`:''}
+  </button>`;
+}
+
+/* ---------------------------------- DAILY TIMELINE VIEW ---------------------------------- */
+
+function renderDailyView(){
+  const date = state.selectedDate;
+  const tasks = tasksOnDate(date);
+  const hours = Array.from({length: DAY_END_H-DAY_START_H}, (_,i)=>DAY_START_H+i);
+  return `
+  <div class="animate-fade-in card rounded-2xl p-4 sm:p-5 max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-1">
+      <button data-action="shiftDay" data-dir="-1" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+      <div class="text-center">
+        <div class="text-base font-extrabold">${date===todayISO()?'Today':fmtDateLong(date)}</div>
+        <div class="text-[11px] text-slate-400">${fmtDateLong(date)}</div>
+      </div>
+      <button data-action="shiftDay" data-dir="1" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+    </div>
+    <div class="flex justify-center mb-4">
+      <button data-action="gotoToday" class="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 border border-white/10">Jump to today</button>
+    </div>
+    ${legendMarkup()}
+    <div class="divide-y divide-white/5 border-t border-b border-white/5">
+      ${hours.map(h=>dailyHourRow(h, tasks)).join('')}
+    </div>
+  </div>`;
+}
+
+function dailyHourRow(h, tasks){
+  const hStart = h*60, hEnd = h*60+60;
+  const rowTasks = tasks.filter(t=> toMin(t.start) < hEnd && toMin(t.end) > hStart && toMin(t.start) >= hStart);
+  const spilling = tasks.filter(t=> toMin(t.start) < hStart && toMin(t.end) > hStart);
+  return `
+  <div class="flex gap-3 py-2.5 min-h-[52px]">
+    <div class="w-14 shrink-0 text-right text-[11px] font-semibold text-slate-500 pt-0.5">${fmtTime12(toHHMM(hStart)).replace(':00','')}</div>
+    <div class="flex-1 space-y-1.5">
+      ${spilling.map(t=>`<div class="text-[10px] text-slate-500 italic pl-2 border-l-2" style="border-color:${TYPE_META[t.type].color}55">↳ continues: ${esc(t.title)}</div>`).join('')}
+      ${rowTasks.length===0 && spilling.length===0 ? `<div class="h-6"></div>` : rowTasks.map(dailyTaskCard).join('')}
+    </div>
+  </div>`;
+}
+
+function dailyTaskCard(t){
+  const meta = TYPE_META[t.type];
+  const done = t.status==='completed';
+  const course = state.courses.find(c=>c.id===t.courseId);
+  return `
+  <div data-action="openTaskModal" data-id="${t.id}" role="button" tabindex="0" class="task-block cursor-pointer w-full text-left rounded-xl px-3 py-2 flex items-center gap-2.5 ${done?'opacity-50':''}" style="background:${meta.color}14; border:1px ${meta.fixed?'solid':'dashed'} ${meta.color}45;">
+    <button data-action="toggleTaskStatus" data-id="${t.id}" data-stop="1" class="shrink-0 w-5 h-5 rounded-full border-2 ${done?'bg-emerald-500 border-emerald-500':'border-slate-500'} flex items-center justify-center">${done?'<i data-lucide="check" class="w-3 h-3 text-white"></i>':''}</button>
+    <i data-lucide="${meta.icon}" class="w-4 h-4 shrink-0" style="color:${meta.color}"></i>
+    <div class="min-w-0 flex-1">
+      <div class="text-sm font-semibold truncate ${done?'line-through':''}">${esc(t.title)}</div>
+      <div class="text-[11px] text-slate-400">${fmtTime12(t.start)}–${fmtTime12(t.end)}${course?` · ${esc(course.name)}`:''}</div>
+    </div>
+    <span class="chip shrink-0" style="background:${meta.color}22;color:${meta.color}">${meta.short}</span>
+  </div>`;
+}
+
+/* ---------------------------------- CHAT DRAWER ---------------------------------- */
+
+function renderChatDrawer(){
+  return `
+  <div id="chatOverlay" data-action="toggleChat" class="fixed inset-0 bg-black/50 z-40 ${chatOpen?'':'hidden'}"></div>
+  <aside id="chatDrawer" class="fixed top-0 right-0 h-full w-full sm:w-[420px] z-50 glass border-l border-white/10 ${chatOpen?'':'translate-x-full'} transition-transform duration-300 flex flex-col">
+    <div class="h-16 px-4 flex items-center justify-between border-b border-white/10 shrink-0">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center"><i data-lucide="sparkles" class="w-4 h-4 text-white"></i></div>
+        <div>
+          <div class="text-sm font-bold leading-none">AI Coach</div>
+          <div class="text-[10px] ${hasApiKey()?'text-emerald-400':'text-slate-500'} mt-0.5">${hasApiKey()?'Connected · '+providerLabel():'No API key set'}</div>
+        </div>
+      </div>
+      <button data-action="toggleChat" class="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    ${chatMessagesMarkup(false)}
+    ${chatInputMarkup(false)}
+  </aside>`;
+}
+
+function chatMessagesMarkup(inline){
+  const h = inline ? 'flex-1 min-h-[220px] max-h-[420px]' : 'flex-1';
+  return `
+  <div id="${inline?'chatMsgsInline':'chatMsgsDrawer'}" class="${h} overflow-y-auto no-scrollbar px-1 ${inline?'':'px-4'} py-3 space-y-3">
+    ${state.chat.map(chatBubble).join('')}
+  </div>`;
+}
+
+function chatBubble(m){
+  const mine = m.role==='user';
+  return `
+  <div class="flex ${mine?'justify-end':'justify-start'}">
+    <div class="max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${mine? 'bg-indigo-500 text-white rounded-br-md':'bg-white/[0.06] border border-white/10 rounded-bl-md'}">
+      ${esc(m.content).replace(/\n/g,'<br>')}
+    </div>
+  </div>`;
+}
+
+function chatInputMarkup(inline){
+  const idInput = inline?'chatInputInline':'chatInputDrawer';
+  return `
+  <div class="p-3 border-t border-white/10 shrink-0">
+    ${!hasApiKey() ? `<button data-action="openSettingsModal" class="w-full mb-2 text-[11px] text-center py-1.5 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/15">Add an API key to enable live AI replies →</button>` : ''}
+    <div class="flex items-end gap-2">
+      <textarea id="${idInput}" rows="1" placeholder="Log how a session went, or ask for help…" class="flex-1 resize-none bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 placeholder:text-slate-500"></textarea>
+      <button data-action="sendChat" data-source="${inline?'inline':'drawer'}" class="w-10 h-10 shrink-0 rounded-xl bg-indigo-500 hover:bg-indigo-400 flex items-center justify-center transition"><i data-lucide="send" class="w-4 h-4 text-white"></i></button>
+    </div>
+  </div>`;
+}
+
+/* ============================================================================================
+   MODALS
+   ============================================================================================ */
+
+function renderModalsRoot(){
+  return `
+  <div id="modalRoot">
+    ${apiSetupModalMarkup()}
+    ${settingsModalMarkup()}
+    ${taskModalMarkup()}
+    ${lectureModalMarkup()}
+    ${roadmapModalMarkup()}
+    ${conflictModalMarkup()}
+  </div>`;
+}
+
+function modalShell(id, title, icon, bodyHTML, opts={}){
+  return `
+  <div id="${id}" data-modal class="fixed inset-0 z-[60] items-center justify-center p-3 sm:p-6">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" data-action="closeModal" data-id="${id}"></div>
+    <div class="relative w-full ${opts.wide?'max-w-2xl':'max-w-md'} max-h-[90vh] overflow-y-auto no-scrollbar glass border border-white/10 rounded-2xl shadow-2xl animate-pop">
+      <div class="sticky top-0 glass px-5 py-4 border-b border-white/10 flex items-center justify-between z-10">
+        <h3 class="text-sm font-bold flex items-center gap-2"><i data-lucide="${icon}" class="w-4 h-4 text-indigo-400"></i>${title}</h3>
+        <button data-action="closeModal" data-id="${id}" class="w-7 h-7 rounded-lg hover:bg-white/10 flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="p-5">${bodyHTML}</div>
+    </div>
+  </div>`;
+}
+
+/* --- API Setup Modal --- */
+function apiSetupModalMarkup(){
+  const body = `
+    <p class="text-xs text-slate-400 mb-4 leading-relaxed">Your key is stored only in this browser's local storage and sent directly to the provider's API — never through any other server. You can remove it anytime.</p>
+    <label class="block text-xs font-semibold text-slate-300 mb-1.5">Provider</label>
+    <div class="grid grid-cols-3 gap-2 mb-4">
+      <button data-action="setProvider" data-provider="deepseek" class="provider-btn px-2 py-2.5 rounded-xl border text-sm font-semibold flex items-center justify-center gap-1.5 ${state.apiProvider==='deepseek'?'bg-indigo-500/15 border-indigo-500/40 text-indigo-300':'bg-white/5 border-white/10 text-slate-400'}"><i data-lucide="waves" class="w-4 h-4"></i>DeepSeek</button>
+      <button data-action="setProvider" data-provider="anthropic" class="provider-btn px-2 py-2.5 rounded-xl border text-sm font-semibold flex items-center justify-center gap-1.5 ${state.apiProvider==='anthropic'?'bg-indigo-500/15 border-indigo-500/40 text-indigo-300':'bg-white/5 border-white/10 text-slate-400'}"><i data-lucide="sparkle" class="w-4 h-4"></i>Anthropic</button>
+      <button data-action="setProvider" data-provider="openai" class="provider-btn px-2 py-2.5 rounded-xl border text-sm font-semibold flex items-center justify-center gap-1.5 ${state.apiProvider==='openai'?'bg-indigo-500/15 border-indigo-500/40 text-indigo-300':'bg-white/5 border-white/10 text-slate-400'}"><i data-lucide="circle" class="w-4 h-4"></i>OpenAI</button>
+    </div>
+    ${state.apiProvider==='deepseek' && state.apiKey ? `<div class="mb-4 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-relaxed flex items-start gap-1.5">
+      <i data-lucide="shield-alert" class="w-3.5 h-3.5 shrink-0 mt-0.5"></i>
+      <span>This key was pre-filled directly into <code class="font-mono">index.html</code> at your request. If you ever share, back up, or sync this file (e.g. iCloud/Drive), that key goes with it — rotate it on DeepSeek's platform if that happens, or hit Remove below and re-enter it so it lives only in this browser's storage.</span>
+    </div>` : ''}
+    <label class="block text-xs font-semibold text-slate-300 mb-1.5">API Key</label>
+    <input id="apiKeyInput" type="password" value="${esc(state.apiKey)}" placeholder="${PROVIDER_META[state.apiProvider]?.keyPlaceholder || 'sk-...'}" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 mb-4 font-mono">
+    <label class="block text-xs font-semibold text-slate-300 mb-1.5">Model</label>
+    <input id="apiModelInput" type="text" value="${esc(state.apiModel)}" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 mb-5 font-mono">
+    <div class="flex gap-2">
+      <button data-action="saveApiKey" class="flex-1 bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-bold py-2.5 rounded-xl transition">Save & Connect</button>
+      ${state.apiKey?`<button data-action="clearApiKey" class="px-4 rounded-xl bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/15 text-sm font-semibold">Remove</button>`:''}
+    </div>`;
+  return modalShell('apiSetupModal','Connect AI Engine','key-round', body);
+}
+
+/* --- Settings Modal --- */
+function settingsModalMarkup(){
+  const c = state.constraints;
+  const body = `
+    <div class="space-y-5">
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="text-xs font-semibold text-slate-300">Max Study Hours / Day</label>
+          <span class="text-xs font-bold text-indigo-300">${c.maxStudyHoursPerDay}h</span>
+        </div>
+        <input id="cMaxHours" type="range" min="1" max="10" step="0.5" value="${c.maxStudyHoursPerDay}" class="w-full">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">No Study Before</label>
+          <input id="cBefore" type="time" value="${c.noStudyBefore}" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">No Cramming After</label>
+          <input id="cAfter" type="time" value="${c.noStudyAfter}" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm">
+        </div>
+      </div>
+      <label class="flex items-center gap-2.5 text-sm cursor-pointer select-none">
+        <input id="cPreserveWorkout" type="checkbox" ${c.preserveWorkout?'checked':''} class="w-4 h-4 rounded accent-indigo-500">
+        Preserve workout windows (protected from AI scheduling)
+      </label>
+      <div>
+        <div class="flex items-center justify-between mb-1"><h4 class="text-xs font-bold text-slate-300">AI Engine</h4><span class="text-[10px] ${hasApiKey()?'text-emerald-400':'text-slate-500'}">${hasApiKey()?'● Connected':'○ Not connected'}</span></div>
+        <button data-action="openApiSetupModal" class="w-full flex items-center justify-between text-sm bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 mt-1">
+          <span class="flex items-center gap-2"><i data-lucide="key-round" class="w-4 h-4 text-indigo-400"></i>${hasApiKey()?`${providerLabel()} · ${esc(state.apiModel)}`:'Add API Key'}</span>
+          <i data-lucide="chevron-right" class="w-4 h-4 text-slate-500"></i>
+        </button>
+      </div>
+      <div>
+        <h4 class="text-xs font-bold text-slate-300 mb-2">Courses</h4>
+        <div class="space-y-1.5 mb-2">${state.courses.map(c=>`<div class="flex items-center gap-2 text-sm bg-white/5 rounded-lg px-3 py-1.5"><span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${c.color}"></span><span class="flex-1 truncate">${esc(c.name)}</span><button data-action="deleteCourse" data-id="${c.id}" class="text-slate-500 hover:text-rose-400"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button></div>`).join('') || '<div class="text-xs text-slate-500">No courses yet.</div>'}</div>
+        <div class="flex gap-2">
+          <input id="newCourseName" type="text" placeholder="Add a course…" class="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm">
+          <button data-action="addCourse" class="px-3 rounded-lg bg-white/10 hover:bg-white/15 text-sm font-semibold">Add</button>
+        </div>
+      </div>
+      <div class="pt-2 border-t border-white/10">
+        <h4 class="text-xs font-bold text-slate-300 mb-2">Data Portability</h4>
+        <div class="grid grid-cols-2 gap-2">
+          <button data-action="exportJSON" class="flex items-center justify-center gap-1.5 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl py-2.5"><i data-lucide="download" class="w-3.5 h-3.5"></i>Export .json</button>
+          <label class="flex items-center justify-center gap-1.5 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl py-2.5 cursor-pointer"><i data-lucide="upload" class="w-3.5 h-3.5"></i>Import .json<input id="importFileInput" type="file" accept="application/json" class="hidden"></label>
+          <button data-action="exportICS" class="col-span-2 flex items-center justify-center gap-1.5 text-xs font-semibold bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/25 text-indigo-300 rounded-xl py-2.5"><i data-lucide="calendar-plus" class="w-3.5 h-3.5"></i>Export .ics (Google / Apple Calendar)</button>
+        </div>
+      </div>
+      <button data-action="saveConstraints" class="w-full bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-bold py-2.5 rounded-xl transition">Save Settings</button>
+    </div>`;
+  return modalShell('settingsModal','Settings & Constraints','settings-2', body, {wide:true});
+}
+
+/* --- Task Modal --- */
+function taskModalMarkup(){
+  const body = `
+  <form id="taskForm" class="space-y-4">
+    <input type="hidden" id="taskId">
+    <div>
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">Title</label>
+      <input id="taskTitle" required type="text" placeholder="e.g. Physics I Lecture" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+    </div>
+    <div>
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">Type</label>
+      <div class="grid grid-cols-3 gap-1.5" id="taskTypeGrid">
+        ${TYPE_ORDER.map(k=>`<button type="button" data-action="pickTaskType" data-type="${k}" class="task-type-btn text-[11px] font-semibold px-2 py-2 rounded-lg border flex flex-col items-center gap-1 transition" data-selected="false" style="--c:${TYPE_META[k].color}"><i data-lucide="${TYPE_META[k].icon}" class="w-3.5 h-3.5"></i>${TYPE_META[k].short}</button>`).join('')}
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="block text-xs font-semibold text-slate-300 mb-1.5">Date</label><input id="taskDate" type="date" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm"></div>
+      <div><label class="block text-xs font-semibold text-slate-300 mb-1.5">Course (optional)</label>
+        <select id="taskCourse" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm"><option value="">— None —</option>${state.courses.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="block text-xs font-semibold text-slate-300 mb-1.5">Start</label><input id="taskStart" type="time" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm"></div>
+      <div><label class="block text-xs font-semibold text-slate-300 mb-1.5">End</label><input id="taskEnd" type="time" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm"></div>
+    </div>
+    <div><label class="block text-xs font-semibold text-slate-300 mb-1.5">Notes</label><textarea id="taskNotes" rows="2" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm resize-none"></textarea></div>
+    <div class="flex items-center gap-2 pt-2">
+      <button type="submit" class="flex-1 bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-bold py-2.5 rounded-xl transition">Save Task</button>
+      <button type="button" data-action="toggleTaskDone" class="hidden px-4 rounded-xl bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 hover:bg-emerald-500/25 text-sm font-semibold" id="taskDoneBtn">Mark Done</button>
+      <button type="button" data-action="deleteTask" class="hidden px-3 rounded-xl bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/15" id="taskDeleteBtn"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+    </div>
+  </form>`;
+  return modalShell('taskModal','New Task','calendar-plus', body);
+}
+
+/* --- Post-Lecture Modal --- */
+function lectureModalMarkup(){
+  const body = `
+  <p class="text-xs text-slate-400 mb-4 leading-relaxed">After a class, tell Aether what you covered. It will dynamically schedule targeted review & practice sessions into your open slots over the coming days — no cramming.</p>
+  <div class="space-y-4">
+    <div>
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">Course</label>
+      <select id="lectureCourse" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm">${state.courses.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('') || '<option value="">General</option>'}</select>
+    </div>
+    <div>
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">What topics did you cover today?</label>
+      <textarea id="lectureText" rows="4" placeholder="e.g. Fluid dynamics, Bernoulli's principle, and an intro to viscosity. Skipped the last 10 minutes on turbulence." class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50"></textarea>
+    </div>
+    <div>
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">Or upload lecture notes (.pdf, .docx, .txt)</label>
+      <label class="flex items-center justify-center gap-2 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-dashed border-white/15 rounded-xl py-4 cursor-pointer text-slate-400">
+        <i data-lucide="upload-cloud" class="w-4 h-4"></i><span id="lectureFileLabel">Click to attach a .pdf, .docx, or .txt file</span>
+        <input id="lectureFileInput" type="file" accept=".txt,.md,.pdf,.docx" class="hidden">
+      </label>
+    </div>
+    <button data-action="submitLecture" class="w-full flex items-center justify-center gap-2 bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-bold py-2.5 rounded-xl transition">
+      <i data-lucide="sparkles" class="w-4 h-4"></i><span id="lectureSubmitLabel">Generate Review Schedule</span>
+    </button>
+  </div>`;
+  return modalShell('lectureModal','What Did You Cover Today?','notebook-pen', body);
+}
+
+/* --- Roadmap Modal --- */
+function roadmapModalMarkup(){
+  const body = `
+  <p class="text-xs text-slate-400 mb-4 leading-relaxed">Describe your goal — Aether will build a tailored topic-by-topic roadmap and pace it automatically against your deadline, scaling up study time if you fall behind.</p>
+  <div class="space-y-4">
+    <div>
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">Goal (e.g. "MCAT 512+", "Physics I Final")</label>
+      <input id="rmGoal" type="text" placeholder="MCAT — target 512 by Sept 5" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm">
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="block text-xs font-semibold text-slate-300 mb-1.5">Target Date</label><input id="rmDate" type="date" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm"></div>
+      <div><label class="block text-xs font-semibold text-slate-300 mb-1.5">Target Institution</label><input id="rmInstitution" type="text" placeholder="Optional" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm"></div>
+    </div>
+    <div>
+      <label class="block text-xs font-semibold text-slate-300 mb-1.5">Course requirements / syllabus notes (optional)</label>
+      <textarea id="rmNotes" rows="3" placeholder="Paste any syllabus text, weak areas, or requirements…" class="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm resize-none"></textarea>
+    </div>
+    <button data-action="submitRoadmap" class="w-full flex items-center justify-center gap-2 bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-bold py-2.5 rounded-xl transition">
+      <i data-lucide="sparkles" class="w-4 h-4"></i><span id="roadmapSubmitLabel">Generate Roadmap</span>
+    </button>
+    <div id="roadmapList" class="pt-3 border-t border-white/10 space-y-2">
+      ${state.roadmaps.length===0 ? '' : state.roadmaps.map(roadmapCard).join('')}
+    </div>
+  </div>`;
+  return modalShell('roadmapModal','Smart Roadmap & Syllabus Parser','sparkles', body, {wide:true});
+}
+
+function roadmapCard(rm){
+  const s = pacingStatusForRoadmap(rm);
+  const pct = s.total ? Math.round(100*s.done/s.total) : 0;
+  return `
+  <div class="rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+    <div class="flex items-center justify-between">
+      <div class="min-w-0">
+        <div class="text-sm font-bold truncate">${esc(rm.examName)}</div>
+        <div class="text-[11px] text-slate-400">${fmtDateShort(rm.examDate)} · ${s.days}d left · ${s.done}/${s.total} topics</div>
+      </div>
+      <button data-action="deleteRoadmap" data-id="${rm.id}" class="text-slate-500 hover:text-rose-400 shrink-0"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+    </div>
+    <div class="h-1.5 rounded-full bg-white/5 mt-2 overflow-hidden"><div class="h-full bg-gradient-to-r from-indigo-500 to-violet-500" style="width:${pct}%"></div></div>
+    ${s.behind ? `<div class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-300"><i data-lucide="trending-up" class="w-3 h-3"></i>Behind pace — scaled up to ~${s.requiredDailyHours}h/day<button data-action="applyPacing" data-id="${rm.id}" class="ml-auto underline hover:text-amber-200">Rebalance</button></div>` : `<div class="mt-2 text-[11px] text-emerald-400 flex items-center gap-1.5"><i data-lucide="check-circle-2" class="w-3 h-3"></i>On pace</div>`}
+  </div>`;
+}
+
+/* --- Conflict Resolution Modal (3 options) --- */
+let pendingConflict = null; // { candidate, options, context }
+let chatOpen = false; // tracks the chat drawer's open/closed state across re-renders
+function conflictModalMarkup(){
+  if(!pendingConflict) return modalShell('conflictModal','Schedule Conflict Detected','alert-triangle', `<div class="text-sm text-slate-400">No conflict.</div>`);
+  const { candidate, options, blockers } = pendingConflict;
+  const cMeta = TYPE_META[candidate.type];
+  const body = `
+    <div class="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
+      <div class="text-xs text-rose-300 font-semibold mb-1 flex items-center gap-1.5"><i data-lucide="zap" class="w-3.5 h-3.5"></i>Overlap detected</div>
+      <div class="text-sm font-bold">${esc(candidate.title)} <span class="text-slate-400 font-normal">clashes with</span> ${blockers.map(b=>esc(b.title)).join(', ')}</div>
+      <div class="text-[11px] text-slate-400 mt-1">${fmtDateShort(candidate.date)} · ${fmtTime12(candidate.start)}–${fmtTime12(candidate.end)}</div>
+    </div>
+    <div class="text-xs font-semibold text-slate-300 mb-2">Choose a smart alternative:</div>
+    <div class="space-y-2">
+      ${options.map((o,i)=>`
+        <button data-action="applyConflictOption" data-opt="${i}" class="w-full text-left p-3.5 rounded-xl border border-white/10 bg-white/[0.03] hover:bg-indigo-500/10 hover:border-indigo-500/30 transition flex items-center gap-3 group">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/15 text-indigo-300 flex items-center justify-center font-bold text-sm shrink-0 group-hover:bg-indigo-500 group-hover:text-white transition">${o.id}</div>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-semibold">${o.label}</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">${o.detail}</div>
+          </div>
+          <i data-lucide="chevron-right" class="w-4 h-4 text-slate-500 group-hover:text-indigo-300"></i>
+        </button>`).join('')}
+      ${options.length===0 ? `<div class="text-sm text-slate-500 text-center py-4">No open slots found in the next 10 days — try adjusting your constraints in Settings.</div>` : ''}
+    </div>
+    <button data-action="cancelConflict" class="w-full mt-3 text-xs font-semibold text-slate-400 hover:text-slate-200 py-2">Cancel — don't schedule this</button>`;
+  return modalShell('conflictModal','Schedule Conflict Detected','alert-triangle', body);
+}
+
+/* ============================================================================================
+   ACTIONS
+   ============================================================================================ */
+
+function openModal(id){ const el = document.getElementById(id); if(el){ el.classList.add('open'); } }
+function closeModal(id){ const el = document.getElementById(id); if(el){ el.classList.remove('open'); } }
+
+const actions = {
+  setView(el){ state.view = el.dataset.view; if(state.view==='daily') state.selectedDate = state.selectedDate; save(); render(); },
+  setDashTab(el){ state.dashTab = el.dataset.tab; save(); render(); },
+  viewDay(el){ state.selectedDate = el.dataset.date; state.view='daily'; save(); render(); },
+  shiftWeek(el){ state.weekAnchor = addDays(state.weekAnchor, 7*Number(el.dataset.dir)); save(); render(); },
+  shiftDay(el){ state.selectedDate = addDays(state.selectedDate, Number(el.dataset.dir)); save(); render(); },
+  gotoToday(){ state.selectedDate = todayISO(); state.weekAnchor = todayISO(); save(); render(); },
+
+  toggleChat(){ chatOpen = !chatOpen; render(); if(chatOpen) scrollChatToBottom(); },
+
+  openSettingsModal(){ closeAllModals(); openModal('settingsModal'); },
+  openApiSetupModal(){ closeAllModals(); openModal('apiSetupModal'); },
+  openTaskModal(el){ closeAllModals(); prepareTaskModal(el?.dataset?.id); openModal('taskModal'); },
+  openLectureModal(){ closeAllModals(); openModal('lectureModal'); },
+  openRoadmapModal(){ closeAllModals(); openModal('roadmapModal'); },
+
+  closeModal(el){ closeModal(el.dataset.id); },
+
+  setProvider(el){
+    state.apiProvider = el.dataset.provider;
+    state.apiModel = PROVIDER_META[state.apiProvider]?.defaultModel || 'gpt-4o';
+    save();
+    const root = $('#apiSetupModal'); if(root){ root.outerHTML = apiSetupModalMarkup(); openModal('apiSetupModal'); lucide.createIcons(); bindGlobalOnce(true); }
+  },
+  saveApiKey(){
+    state.apiKey = $('#apiKeyInput').value.trim();
+    state.apiModel = $('#apiModelInput').value.trim() || state.apiModel;
+    save();
+    toast(hasApiKey() ? 'AI engine connected.' : 'API key cleared.', hasApiKey()?'success':'info');
+    closeModal('apiSetupModal'); render();
+  },
+  clearApiKey(){ state.apiKey=''; save(); toast('API key removed.'); closeModal('apiSetupModal'); render(); },
+
+  saveConstraints(){
+    state.constraints.maxStudyHoursPerDay = Number($('#cMaxHours').value);
+    state.constraints.noStudyBefore = $('#cBefore').value;
+    state.constraints.noStudyAfter = $('#cAfter').value;
+    state.constraints.preserveWorkout = $('#cPreserveWorkout').checked;
+    save(); toast('Settings saved.', 'success'); closeModal('settingsModal'); render();
+  },
+  addCourse(){
+    const name = $('#newCourseName').value.trim(); if(!name) return;
+    const palette = ['#818cf8','#fb7185','#38bdf8','#34d399','#fbbf24','#a78bfa','#f472b6'];
+    state.courses.push({ id: uid('course'), name, color: palette[state.courses.length % palette.length] });
+    save(); const root=$('#settingsModal'); root.outerHTML = settingsModalMarkup(); openModal('settingsModal'); lucide.createIcons(); bindGlobalOnce(true);
+  },
+  deleteCourse(el){ state.courses = state.courses.filter(c=>c.id!==el.dataset.id); save(); const root=$('#settingsModal'); root.outerHTML = settingsModalMarkup(); openModal('settingsModal'); lucide.createIcons(); bindGlobalOnce(true); },
+
+  exportJSON(){ exportJSON(); },
+  exportICS(){ exportICS(); },
+
+  pickTaskType(el){
+    $$('.task-type-btn').forEach(b=>b.dataset.selected='false');
+    el.dataset.selected='true';
+    $('#taskTypeGrid').dataset.value = el.dataset.type;
+    applyTaskTypeStyles();
+  },
+
+  toggleTaskDone(){ const id=$('#taskId').value; if(id) actions.toggleTaskStatus({dataset:{id}}); closeModal('taskModal'); },
+  deleteTask(){ const id=$('#taskId').value; if(id){ state.tasks = state.tasks.filter(t=>t.id!==id); save(); toast('Task deleted.'); closeModal('taskModal'); render(); } },
+
+  toggleTaskStatus(el){
+    const t = state.tasks.find(x=>x.id===el.dataset.id); if(!t) return;
+    t.status = t.status==='completed' ? 'pending' : 'completed';
+    t.completedAt = t.status==='completed' ? Date.now() : null;
+    if(t.status==='completed' && t.type==='review' && t.roadmapId){
+      const rm = state.roadmaps.find(r=>r.id===t.roadmapId);
+      if(rm && t.topic){ const top = rm.topics.find(x=>x.name===t.topic); if(top) top.done = true; }
+    }
+    save(); render();
+    if(t.status==='completed') toast(`Marked "${t.title}" as complete.`, 'success');
+  },
+
+  deleteRoadmap(el){ state.roadmaps = state.roadmaps.filter(r=>r.id!==el.dataset.id); state.tasks = state.tasks.filter(t=>t.roadmapId!==el.dataset.id); save(); toast('Roadmap removed.'); const root=$('#roadmapModal'); root.outerHTML = roadmapModalMarkup(); openModal('roadmapModal'); lucide.createIcons(); bindGlobalOnce(true); },
+  applyPacing(el){ const s = applyPacingScaleUp(el.dataset.id); toast(s.behind?`Scaled up upcoming sessions — targeting ${s.requiredDailyHours}h/day.`:'Already on pace.', 'success'); const root=$('#roadmapModal'); root.outerHTML = roadmapModalMarkup(); openModal('roadmapModal'); lucide.createIcons(); bindGlobalOnce(true); render(); },
+
+  cancelConflict(){ pendingConflict = null; closeModal('conflictModal'); },
+  applyConflictOption(el){
+    if(!pendingConflict) return;
+    const opt = pendingConflict.options[Number(el.dataset.opt)];
+    const isNew = pendingConflict.isNew;
+    // remove any existing version of candidate.id from state (in case editing)
+    state.tasks = state.tasks.filter(t=>t.id!==pendingConflict.candidate.id);
+    opt.apply.forEach(task=> state.tasks.push(task));
+    save();
+    toast('Task rescheduled — conflict resolved.', 'success');
+    pendingConflict = null;
+    closeModal('conflictModal');
+    render();
+  },
+
+  sendChat(el){ handleSendChat(el.dataset.source); },
+};
+
+function applyTaskTypeStyles(){
+  $$('.task-type-btn').forEach(b=>{
+    const sel = b.dataset.selected==='true';
+    b.style.background = sel ? 'color-mix(in srgb, var(--c) 22%, transparent)' : 'rgba(255,255,255,0.03)';
+    b.style.borderColor = sel ? 'color-mix(in srgb, var(--c) 55%, transparent)' : 'rgba(255,255,255,0.08)';
+    b.style.color = sel ? 'var(--c)' : '#94a3b8';
+  });
+}
+
+function closeAllModals(){ $$('[data-modal]').forEach(m=>m.classList.remove('open')); }
+
+/* ---------------------------------- TASK MODAL LOGIC ---------------------------------- */
+
+function prepareTaskModal(id){
+  const isEdit = !!id;
+  const t = isEdit ? state.tasks.find(x=>x.id===id) : null;
+  $('#taskId').value = t?.id || '';
+  $('#taskTitle').value = t?.title || '';
+  $('#taskDate').value = t?.date || state.selectedDate || todayISO();
+  $('#taskStart').value = t?.start || '09:00';
+  $('#taskEnd').value = t?.end || '10:00';
+  $('#taskCourse').value = t?.courseId || '';
+  $('#taskNotes').value = t?.notes || '';
+  $$('.task-type-btn').forEach(b=> b.dataset.selected = (b.dataset.type === (t?.type||'personal')) ? 'true':'false');
+  $('#taskTypeGrid').dataset.value = t?.type || 'personal';
+  applyTaskTypeStyles();
+  $('#taskDoneBtn').classList.toggle('hidden', !isEdit);
+  $('#taskDeleteBtn').classList.toggle('hidden', !isEdit);
+  if(isEdit) $('#taskDoneBtn').textContent = t.status==='completed' ? 'Mark Pending' : 'Mark Done';
+  $('#taskModal h3').innerHTML = `<i data-lucide="calendar-plus" class="w-4 h-4 text-indigo-400"></i>${isEdit?'Edit Task':'New Task'}`;
+  lucide.createIcons();
+}
+
+function handleTaskFormSubmit(e){
+  e.preventDefault();
+  const id = $('#taskId').value || uid('task');
+  const type = $('#taskTypeGrid').dataset.value || 'personal';
+  const candidate = {
+    id, title: $('#taskTitle').value.trim() || 'Untitled Task',
+    type, courseId: $('#taskCourse').value || null,
+    date: $('#taskDate').value || todayISO(),
+    start: $('#taskStart').value || '09:00',
+    end: $('#taskEnd').value || '10:00',
+    status: state.tasks.find(t=>t.id===id)?.status || 'pending',
+    notes: $('#taskNotes').value || '',
+    topic: state.tasks.find(t=>t.id===id)?.topic || '',
+    roadmapId: state.tasks.find(t=>t.id===id)?.roadmapId || null,
+    createdAt: state.tasks.find(t=>t.id===id)?.createdAt || Date.now(),
+    completedAt: state.tasks.find(t=>t.id===id)?.completedAt || null,
+  };
+  if(toMin(candidate.end) <= toMin(candidate.start)){ toast('End time must be after start time.', 'error'); return; }
+
+  const conflicts = findConflicts(candidate).filter(c => typeWeight(c) >= typeWeight(candidate));
+  if(conflicts.length){
+    const options = generateConflictOptions(candidate);
+    pendingConflict = { candidate, options, blockers: conflicts, isNew: !state.tasks.some(t=>t.id===id) };
+    closeModal('taskModal');
+    const root = $('#conflictModal'); root.outerHTML = conflictModalMarkup(); openModal('conflictModal'); lucide.createIcons(); bindGlobalOnce(true);
+    return;
+  }
+
+  const idx = state.tasks.findIndex(t=>t.id===id);
+  if(idx>=0) state.tasks[idx] = candidate; else state.tasks.push(candidate);
+  save();
+  toast(idx>=0 ? 'Task updated.' : 'Task created.', 'success');
+  closeModal('taskModal');
+  render();
+}
+
+/* ---------------------------------- POST-LECTURE FLOW ---------------------------------- */
+
+let lectureAttachedText = '';
+
+function readFileAsText(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+function readFileAsArrayBuffer(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function extractPdfText(file){
+  if(typeof pdfjsLib === 'undefined') throw new Error('PDF parser did not load — check your connection and try again.');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const buf = await readFileAsArrayBuffer(file);
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  const maxPages = Math.min(pdf.numPages, 40); // guard against huge scanned textbooks
+  for(let i=1; i<=maxPages; i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(it=>it.str).join(' ') + '\n';
+  }
+  return text.trim();
+}
+
+async function extractDocxText(file){
+  if(typeof mammoth === 'undefined') throw new Error('DOCX parser did not load — check your connection and try again.');
+  const buf = await readFileAsArrayBuffer(file);
+  const result = await mammoth.extractRawText({ arrayBuffer: buf });
+  return (result.value || '').trim();
+}
+
+async function handleLectureFileChange(e){
+  const file = e.target.files[0]; if(!file) return;
+  const label = $('#lectureFileLabel');
+  const ext = file.name.split('.').pop().toLowerCase();
+  label.textContent = `Parsing ${file.name}…`;
+  try{
+    let text = '';
+    if(ext === 'pdf') text = await extractPdfText(file);
+    else if(ext === 'docx') text = await extractDocxText(file);
+    else text = await readFileAsText(file); // .txt, .md, and other plain-text fallbacks
+    if(!text) throw new Error('No readable text found in this file (it may be a scanned/image-only document).');
+    lectureAttachedText = text;
+    label.textContent = `✓ ${file.name} (${text.length.toLocaleString()} chars extracted)`;
+  }catch(err){
+    console.error('Lecture file parse failed', err);
+    label.textContent = 'Click to attach a .pdf, .docx, or .txt file';
+    lectureAttachedText = '';
+    toast(`Couldn't read ${file.name}: ${err.message}`, 'error');
+  }
+}
+
+async function handleSubmitLecture(){
+  const courseId = $('#lectureCourse').value || null;
+  const course = state.courses.find(c=>c.id===courseId);
+  const text = ($('#lectureText').value || '') + (lectureAttachedText ? '\n\n'+lectureAttachedText : '');
+  if(!text.trim()){ toast('Add what you covered, or attach notes, first.', 'warn'); return; }
+
+  const btn = $('[data-action="submitLecture"]'); const label = $('#lectureSubmitLabel');
+  btn.disabled = true; label.textContent = 'Analyzing…';
+
+  let topics = [];
+  try{
+    if(hasApiKey()){
+      const result = await aiExtractTopics({ courseName: course?.name, coverageText: text });
+      topics = (result.topics||[]).slice(0,8);
+    } else {
+      topics = text.split(/[,\n;]/).map(s=>s.trim()).filter(Boolean).slice(0,8);
+      if(topics.length===0) topics = [text.trim().slice(0,60)];
+    }
+  }catch(err){
+    toast(apiErrorMessage(err), 'error');
+    topics = text.split(/[,\n;]/).map(s=>s.trim()).filter(Boolean).slice(0,8);
+  }
+
+  let scheduled = 0, conflictsResolved = 0;
+  const spacing = [1,3,7]; // days out — eliminates cramming
+  topics.forEach((topic, ti)=>{
+    spacing.forEach((offset, si)=>{
+      const dur = si===0 ? 40 : 25;
+      const preferred = addDays(todayISO(), offset);
+      const slot = autoPlace(preferred, dur, { afterMin: toMin('16:00'), maxDaysAhead: 4 });
+      if(slot){
+        state.tasks.push({ id:uid('task'), title:`Review: ${topic}`, type:'review', courseId, date:slot.date, start:slot.start, end:slot.end, status:'pending', notes:`Auto-scheduled from lecture coverage on ${todayISO()}.`, topic, roadmapId:null, createdAt:Date.now(), completedAt:null });
+        scheduled++;
+      } else conflictsResolved++;
+    });
+  });
+  save();
+  btn.disabled = false; label.textContent = 'Generate Review Schedule';
+  lectureAttachedText='';
+  closeModal('lectureModal');
+  toast(`${scheduled} review sessions scheduled across the next 7 days for: ${topics.slice(0,4).join(', ')}${topics.length>4?'…':''}`, 'success');
+  render();
+}
+
+/* ---------------------------------- ROADMAP FLOW ---------------------------------- */
+
+async function handleSubmitRoadmap(){
+  const goal = $('#rmGoal').value.trim();
+  const examDate = $('#rmDate').value;
+  const institution = $('#rmInstitution').value.trim();
+  const notes = $('#rmNotes').value.trim();
+  if(!goal || !examDate){ toast('Add a goal and target date.', 'warn'); return; }
+
+  const btn = $('[data-action="submitRoadmap"]'); const label = $('#roadmapSubmitLabel');
+  btn.disabled = true; label.textContent = 'Building roadmap…';
+
+  let data;
+  try{
+    if(hasApiKey()){
+      data = await aiGenerateRoadmap({ goal, examDate, institution, courseNotes: notes });
+    } else {
+      data = { summary:'Rule-based starter plan (add an API key for a tailored AI roadmap).', topics: Array.from({length:8},(_,i)=>({ name:`${goal} — Topic ${i+1}`, estimated_hours: 3, priority: i<3?'high':(i<6?'medium':'low') })) };
+    }
+  }catch(err){
+    toast(apiErrorMessage(err), 'error');
+    btn.disabled=false; label.textContent='Generate Roadmap';
+    return;
+  }
+
+  const rm = { id: uid('roadmap'), examName: goal, examDate, institution, createdDate: todayISO(), summary: data.summary||'', topics: (data.topics||[]).map(t=>({ name:t.name, estimatedHours: t.estimated_hours||2, priority: t.priority||'medium', done:false })) };
+  state.roadmaps.push(rm);
+
+  // Pace topics across the available window, front-loading high priority.
+  const days = Math.max(1, dayDiff(todayISO(), examDate));
+  const sorted = rm.topics.slice().sort((a,b)=> ({high:0,medium:1,low:2}[a.priority]-{high:0,medium:1,low:2}[b.priority]));
+  const dailyCapMin = state.constraints.maxStudyHoursPerDay*60;
+  let cursorDay = 0, placed=0;
+  sorted.forEach((topic)=>{
+    const sessions = Math.max(1, Math.ceil((topic.estimatedHours*60) / 45));
+    for(let s=0;s<sessions;s++){
+      const preferredOffset = clamp(cursorDay, 0, Math.max(0,days-1));
+      const preferred = addDays(todayISO(), preferredOffset);
+      const slot = autoPlace(preferred, 45, { afterMin: toMin('16:00'), maxDaysAhead: Math.max(1,days) });
+      if(slot){
+        state.tasks.push({ id:uid('task'), title:`Study: ${topic.name}`, type:'review', courseId:null, date:slot.date, start:slot.start, end:slot.end, status:'pending', notes:`Part of roadmap: ${rm.examName}`, topic:topic.name, roadmapId: rm.id, createdAt:Date.now(), completedAt:null });
+        placed++;
+      }
+      cursorDay += Math.max(1, Math.floor(days / (rm.topics.length*sessions || 1)));
+    }
+  });
+
+  save();
+  btn.disabled = false; label.textContent = 'Generate Roadmap';
+  $('#rmGoal').value=''; $('#rmNotes').value='';
+  toast(`Roadmap "${rm.examName}" created — ${placed} study sessions scheduled through ${fmtDateShort(examDate)}.`, 'success');
+  const root = $('#roadmapModal'); root.outerHTML = roadmapModalMarkup(); openModal('roadmapModal'); lucide.createIcons(); bindGlobalOnce(true);
+  render();
+}
+
+/* ---------------------------------- CHAT FLOW ---------------------------------- */
+
+async function handleSendChat(source){
+  const inputId = source==='inline' ? 'chatInputInline' : 'chatInputDrawer';
+  const input = $('#'+inputId); if(!input) return;
+  const text = input.value.trim(); if(!text) return;
+  input.value='';
+  state.chat.push({ role:'user', content:text, ts:Date.now() });
+  save(); render();
+  scrollChatToBottom();
+  if(source==='drawer' && !chatOpen){ chatOpen = true; }
+
+  if(!hasApiKey()){
+    state.chat.push({ role:'assistant', content:"I need an API key to think — open Settings and connect Anthropic or OpenAI, and I'll take it from there.", ts:Date.now() });
+    save(); render(); scrollChatToBottom();
+    return;
+  }
+
+  const thinkingMsg = { role:'assistant', content:'…', ts:Date.now(), thinking:true };
+  state.chat.push(thinkingMsg); render(); scrollChatToBottom();
+
+  try{
+    const { text: reply, toolCall } = await aiChat(text);
+    state.chat.pop(); // remove thinking bubble
+    let placedNote = '';
+    if(toolCall && toolCall.name==='log_performance'){
+      const course = state.courses.find(c=> toolCall.input.topic && c.name.toLowerCase().includes(toolCall.input.topic.toLowerCase().split(' ')[0]));
+      const placed = logPerformance({ topic: toolCall.input.topic, rating: toolCall.input.rating, note: toolCall.input.note, courseId: course?.id||null });
+      placedNote = `\n\n📌 Logged **${toolCall.input.topic}** as *${toolCall.input.rating}* — ${placed} adaptive review session${placed===1?'':'s'} added to your calendar.`;
+      toast(`Adaptive reschedule: ${placed} review session(s) added for "${toolCall.input.topic}".`, 'success');
+    }
+    state.chat.push({ role:'assistant', content:(reply||'Got it.') + placedNote, ts:Date.now() });
+  }catch(err){
+    state.chat.pop();
+    state.chat.push({ role:'assistant', content: apiErrorMessage(err), ts:Date.now() });
+  }
+  save(); render(); scrollChatToBottom();
+}
+
+function scrollChatToBottom(){
+  ['chatMsgsInline','chatMsgsDrawer'].forEach(id=>{ const el=$('#'+id); if(el) el.scrollTop = el.scrollHeight; });
+}
+
+/* ---------------------------------- GLOBAL BINDING ---------------------------------- */
+
+let boundOnce = false;
+function bindGlobalOnce(force){
+  if(boundOnce && !force) return;
+  boundOnce = true;
+
+  document.body.addEventListener('click', (e)=>{
+    const el = e.target.closest('[data-action]');
+    if(!el) return;
+    const fn = actions[el.dataset.action];
+    if(fn) fn(el, e);
+  });
+
+  document.body.addEventListener('submit', (e)=>{
+    if(e.target.id==='taskForm') handleTaskFormSubmit(e);
+  });
+
+  document.body.addEventListener('change', (e)=>{
+    if(e.target.id==='importFileInput' && e.target.files[0]) importJSONFile(e.target.files[0]);
+    if(e.target.id==='lectureFileInput') handleLectureFileChange(e);
+    if(e.target.id==='cMaxHours'){ const badge = e.target.closest('div').querySelector('span'); if(badge) badge.textContent = e.target.value+'h'; }
+  });
+
+  document.body.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter' && !e.shiftKey && (e.target.id==='chatInputInline' || e.target.id==='chatInputDrawer')){
+      e.preventDefault();
+      handleSendChat(e.target.id==='chatInputInline' ? 'inline' : 'drawer');
+    }
+    if(e.key==='Escape') closeAllModals();
+  });
+
+  document.body.addEventListener('click', (e)=>{
+    if(e.target.id==='submitLecture' || e.target.closest('[data-action="submitLecture"]')) handleSubmitLecture();
+    if(e.target.id==='submitRoadmap' || e.target.closest('[data-action="submitRoadmap"]')) handleSubmitRoadmap();
+  });
+}
+// Wire the special-case buttons (submitLecture/submitRoadmap use data-action but need async handlers not in `actions`)
+document.addEventListener('DOMContentLoaded', ()=>{});
+
+/* ---------------------------------- BOOT ---------------------------------- */
+render();
+save();
+</script>
+</body>
+</html>
